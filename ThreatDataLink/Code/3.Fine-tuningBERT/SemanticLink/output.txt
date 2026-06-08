@@ -1,0 +1,1478 @@
+import json
+import math
+import warnings
+import os
+import random
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.amp import GradScaler, autocast
+from torch.utils.data import Dataset, DataLoader
+from transformers import AutoTokenizer, AutoModel, get_cosine_schedule_with_warmup
+from transformers import logging as hf_logging
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    confusion_matrix, classification_report,
+    roc_auc_score, roc_curve,
+    precision_recall_curve, average_precision_score,
+    f1_score, precision_score, recall_score,
+)
+import pickle
+from tqdm import tqdm
+
+hf_logging.set_verbosity_error()
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+warnings.filterwarnings("ignore", message=".*Token indices sequence length.*")
+warnings.filterwarnings("ignore", message=".*Some weights of Roberta.*")
+
+================================================================================
+
+import json
+import pandas as pd
+
+DATASET_PATH = "/kaggle/input/datasets/nisha0211/completecontrastivedataset/siamese_samples_with_srl.json"
+
+with open(DATASET_PATH, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+df = pd.DataFrame(data["samples"])
+
+print("Rows:", len(df))
+print("Columns:")
+print(df.columns.tolist())
+
+================================================================================
+
+# Configuration
+
+MODEL_NAME   = "roberta-large"
+
+SPECIAL_ROLE_TOKENS = [
+    "<SUB>", "</SUB>",
+    "<OBJ>", "</OBJ>",
+    "<VRB>", "</VRB>",
+    "<MNR>", "</MNR>",
+    "<LOC>", "</LOC>",
+    "<TMP>", "</TMP>",
+    "<CAU>", "</CAU>",
+    "<NEG>", "</NEG>",
+    "<MOD>", "</MOD>",
+    "<ADV>", "</ADV>",
+    "<PRP>", "</PRP>",
+    "<OB2>", "</OB2>",
+    "<BNF>", "</BNF>",
+    "<EPT>", "</EPT>",
+]
+
+DATASET_PATH = "/kaggle/input/datasets/nisha0211/completecontrastivedataset/siamese_samples_with_srl.json"
+BASE_DIR     = "/kaggle/working"
+SEEDS        = [42 , 123, 7, 21, 99, 555]
+SPLIT_SEED   = 42          # all seeds share the same test set
+
+# Architecture 
+MAX_LEN      = 128
+HIDDEN_SIZE  = 1024        # roberta-large
+PROJ_DIM     = 256
+DROPOUT      = 0.3
+
+# Training
+BATCH_SIZE          = 16
+GRAD_ACCUM_STEPS    = 2    # effective batch = 32
+EPOCHS              = 15
+PATIENCE            = 5    # early stop on val F1
+LR_ENCODER          = 2e-5
+LR_HEADS            = 1e-4  # heads 
+WEIGHT_DECAY        = 1e-2
+WARMUP_RATIO        = 0.1
+FREEZE_EPOCHS       = 1    # freeze encoder for first epochs
+
+# Loss
+CONTRASTIVE_TEMP    = 0.07  
+BCE_POS_WEIGHT      = 2.0   # counter 76/24 imbalance
+LABEL_SMOOTHING     = 0.02  # prevent overconfident BCE
+CONTRASTIVE_WEIGHT  = 0.5   # weight applied to contrastive loss only; BCE weight = 1.0
+
+TEST_SIZE  = 0.15
+VAL_SIZE   = 0.15
+USE_SRL    = True       # False: use raw CVE/Technique text, skipping SRL markup
+
+
+================================================================================
+
+# Reproducibility Seed Setter
+
+================================================================================
+
+def set_all_seeds(seed: int):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False
+    print(f"[Seed] {seed}")
+
+================================================================================
+
+# Data Load
+
+================================================================================
+
+
+def load_srl_dataset(json_path: str) -> pd.DataFrame:
+    try:
+        with open(json_path) as f:
+            data = json.load(f).get("samples", [])
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        print(f"[Error] {e}")
+        return pd.DataFrame()
+    samples = []
+    for sample in tqdm(data, desc="[Data] Processing SRL"):
+        try:
+            cve_text  = sample.get("CVE_markup", "").strip() or sample.get("CVE_text", "")
+            
+            tech_text = sample.get("Technique_markup", "").strip() or sample.get("Technique_text", "")
+            if not cve_text.strip() or not tech_text.strip():
+                continue
+            samples.append({
+                "CVE_ID":         sample.get("CVE_ID", ""),
+                "CVE_text":       cve_text,
+                "Technique_text": tech_text,
+                "label":          int(sample.get("label", 0)),
+                "role_score":     0.0, 
+            })
+        except Exception as e:
+            print(f"[Warning] Skipping sample: {e}")
+    df = pd.DataFrame(samples)
+    print(f"[Data] {len(df)} samples | "
+          f"Pos={df['label'].sum()} Neg={(df['label']==0).sum()}")
+    return df
+
+def load_raw_dataset(json_path: str) -> pd.DataFrame:
+    """Load dataset using raw CVE/Technique text without any SRL markup."""
+    try:
+        with open(json_path) as f:
+            data = json.load(f).get("samples", [])
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        print(f"[Error] {e}")
+        return pd.DataFrame()
+
+    samples = []
+    for sample in tqdm(data, desc="[Data] Processing RAW"):
+        try:
+            cve_text  = sample.get("CVE_text",       "")
+            tech_text = sample.get("Technique_text", "")
+            if not cve_text.strip() or not tech_text.strip():
+                continue
+            samples.append({
+                "CVE_ID":         sample.get("CVE_ID", ""),
+                "CVE_text":       cve_text,
+                "Technique_text": tech_text,
+                "label":          int(sample.get("label", 0)),
+                "role_score":     0.0,
+            })
+        except Exception as e:
+            print(f"[Warning] Skipping sample: {e}")
+
+    df = pd.DataFrame(samples)
+    print(f"[Data] {len(df)} samples | "
+          f"Pos={df['label'].sum()} Neg={(df['label']==0).sum()}")
+    return df
+
+
+================================================================================
+
+
+# Dataset
+
+class SiameseDataset(Dataset):
+    def __init__(self, df: pd.DataFrame, tokenizer,
+                 max_len: int   = MAX_LEN,
+                 role_min: float = None,
+                 role_max: float = None):
+        self.df        = df.reset_index(drop=True)
+        self.tokenizer = tokenizer
+        self.max_len   = max_len
+
+        r = df["role_score"].values.astype(np.float32)
+        self.role_min = float(r.min()) if role_min is None else role_min
+        self.role_max = float(r.max()) if role_max is None else role_max
+        rng = max(self.role_max - self.role_min, 1e-8)
+        self.role_weights  = (r - self.role_min) / rng
+        self.binary_labels = df["label"].values.astype(np.float32)
+
+    @property
+    def norm_stats(self):
+        return self.role_min, self.role_max
+
+    def __len__(self):
+        return len(self.df)
+
+    def _encode_cve(self, text: str) -> dict:
+        return self.tokenizer(
+            text, max_length=self.max_len,
+            padding="max_length", truncation=True, return_tensors="pt"
+        )
+
+    def _encode_technique(self, text: str) -> dict:
+        tokens = self.tokenizer(
+            text, add_special_tokens=True,
+            truncation=False, return_tensors="pt"
+        )
+        ids  = tokens["input_ids"][0]
+        mask = tokens["attention_mask"][0]
+
+        if ids.shape[0] <= self.max_len:
+            pad_len = self.max_len - ids.shape[0]
+            ids  = torch.cat([ids, torch.full((pad_len,), self.tokenizer.pad_token_id)])
+            mask = torch.cat([mask, torch.zeros(pad_len, dtype=torch.long)])
+        else:
+            half = (self.max_len - 2) // 2
+            ids  = torch.cat([ids[:half+1], ids[-(self.max_len - half - 1):]])
+            mask = torch.ones(self.max_len, dtype=torch.long)
+
+        return {"input_ids": ids.unsqueeze(0), "attention_mask": mask.unsqueeze(0)}
+
+    def __getitem__(self, idx):
+        row      = self.df.iloc[idx]
+        cve_enc  = self._encode_cve(row["CVE_text"])
+        tech_enc = self._encode_technique(row["Technique_text"])
+        
+        return {
+            "cve_input_ids":       cve_enc["input_ids"].squeeze(0),
+            "cve_attention_mask":  cve_enc["attention_mask"].squeeze(0),
+            "tech_input_ids":      tech_enc["input_ids"].squeeze(0),
+            "tech_attention_mask": tech_enc["attention_mask"].squeeze(0),
+            "binary_labels":       torch.tensor(self.binary_labels[idx], dtype=torch.float),
+            "role_weights":        torch.tensor(self.role_weights[idx],  dtype=torch.float),
+            "CVE_text":            row["CVE_text"],
+            "Technique_text":      row["Technique_text"],
+        }
+
+
+
+================================================================================
+
+# Model
+
+================================================================================
+
+# Model
+
+class SoftAlignAttention(nn.Module):
+    """ESIM-style cross-sentence soft alignment."""
+    def forward(self, a, b, mask_a, mask_b):
+        sim      = torch.bmm(a, b.transpose(1, 2))
+        mask_b_e = (mask_b == 0).unsqueeze(1).expand_as(sim)
+        mask_a_e = (mask_a == 0).unsqueeze(2).expand_as(sim)
+        attn_a   = F.softmax(sim.masked_fill(mask_b_e, -1e4), dim=2)
+        attn_b   = F.softmax(sim.masked_fill(mask_a_e, -1e4).transpose(1, 2), dim=2)
+        return torch.bmm(attn_a, b), torch.bmm(attn_b, a)
+
+
+class AttentionPooling(nn.Module):
+    """Weighted mean pooling using a learned attention scalar per token."""
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.attn = nn.Linear(hidden_size, 1)
+
+    def forward(self, token_emb, attention_mask):
+        scores  = self.attn(token_emb).squeeze(-1)
+        scores  = scores.masked_fill(attention_mask == 0, -1e4)
+        weights = F.softmax(scores, dim=1).unsqueeze(-1)
+        return (token_emb * weights).sum(dim=1)
+
+
+class SemanticLinkModel(nn.Module):
+    """SemanticLink architecture"""
+
+    def __init__(self,
+                 model_name:  str   = MODEL_NAME,
+                 hidden_size: int   = HIDDEN_SIZE,
+                 proj_dim:    int   = PROJ_DIM,
+                 dropout:     float = DROPOUT):
+        super().__init__()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.encoder = AutoModel.from_pretrained(model_name)
+
+        self.align = SoftAlignAttention()
+        self.pool  = AttentionPooling(hidden_size)
+
+        self.proj = nn.Sequential(
+            nn.Linear(hidden_size, proj_dim),
+            nn.GELU(),
+            nn.LayerNorm(proj_dim),
+            nn.Dropout(dropout),
+        )
+
+        self.contrast_head = nn.Sequential(
+            nn.Linear(proj_dim, proj_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(proj_dim, proj_dim),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Linear(proj_dim * 4, 1024),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(512, 1),
+        )
+
+    # Encoder freeze / unfreeze 
+    def freeze_encoder(self):
+        for p in self.encoder.parameters():
+            p.requires_grad = False
+
+    def unfreeze_encoder(self):
+        for p in self.encoder.parameters():
+            p.requires_grad = True
+
+    # Forward 
+    def _encode(self, input_dict):
+        return self.encoder(**input_dict).last_hidden_state
+
+    def forward(self, cve_input, tech_input, binary_labels=None):
+        cve_seq  = self._encode(cve_input)
+        tech_seq = self._encode(tech_input)
+        cve_mask  = cve_input["attention_mask"]
+        tech_mask = tech_input["attention_mask"]
+
+        aligned_cve, aligned_tech = self.align(cve_seq, tech_seq, cve_mask, tech_mask)
+        cve_combined  = (cve_seq  + aligned_cve)  / 2.0
+        tech_combined = (tech_seq + aligned_tech) / 2.0
+
+        cve_emb  = self.proj(self.pool(cve_combined,  cve_mask))
+        tech_emb = self.proj(self.pool(tech_combined, tech_mask))
+
+        diff     = torch.abs(cve_emb - tech_emb)
+        prod     = cve_emb * tech_emb
+        features = torch.cat([cve_emb, tech_emb, diff, prod], dim=1)
+        logit    = self.classifier(features).squeeze(-1)
+
+        cont_loss = torch.tensor(0.0, device=logit.device)
+        if binary_labels is not None:
+            c_cve  = F.normalize(self.contrast_head(cve_emb),  dim=-1)
+            c_tech = F.normalize(self.contrast_head(tech_emb), dim=-1)
+            cont_loss = supervised_contrastive_loss(
+                torch.stack([c_cve, c_tech], dim=1),
+                binary_labels, temperature=CONTRASTIVE_TEMP
+            )
+        return logit, cve_emb, tech_emb, cont_loss
+
+
+    def get_optimizer_groups(self, lr_encoder: float, lr_heads: float,
+                              weight_decay: float):
+        n_layers   = self.encoder.config.num_hidden_layers
+        decay_rate = 0.9
+
+        encoder_params = []
+        for layer_idx in range(n_layers):
+            layer_lr = lr_encoder * (decay_rate ** (n_layers - layer_idx))
+            params   = [p for n, p in self.encoder.named_parameters()
+                        if f"layer.{layer_idx}." in n and p.requires_grad]
+            if params:
+                encoder_params.append({"params": params, "lr": layer_lr,
+                                        "weight_decay": weight_decay})
+
+        embedding_params = [p for n, p in self.encoder.named_parameters()
+                            if "embeddings" in n or "pooler" in n]
+        if embedding_params:
+            encoder_params.append({
+                "params": embedding_params,
+                "lr": lr_encoder * (decay_rate ** n_layers),
+                "weight_decay": weight_decay
+            })
+
+        head_params = (list(self.proj.parameters()) +
+                       list(self.contrast_head.parameters()) +
+                       list(self.classifier.parameters()) +
+                       list(self.pool.parameters()))
+        head_group  = {"params": head_params, "lr": lr_heads,
+                       "weight_decay": weight_decay}
+
+        return encoder_params + [head_group]
+
+
+
+================================================================================
+
+
+
+# Loss Functions
+
+def supervised_contrastive_loss(features: torch.Tensor,
+                                 labels:   torch.Tensor,
+                                 temperature: float = 0.05) -> torch.Tensor:
+    """SupCon loss with in-batch negatives (Khosla et al., 2020)."""
+    B    = features.size(0)
+    flat = features.view(2 * B, -1)
+    lab  = labels.repeat(2).long()
+
+    sim       = torch.mm(flat, flat.T) / temperature
+    self_mask = torch.eye(2 * B, dtype=torch.bool, device=features.device)
+    sim.masked_fill_(self_mask, -1e4)
+
+    pos_mask  = (lab.unsqueeze(0) == lab.unsqueeze(1)) & ~self_mask
+    log_prob  = F.log_softmax(sim, dim=1)
+    pos_count = pos_mask.sum(dim=1).clamp(min=1)
+    loss      = -(log_prob * pos_mask.float()).sum(dim=1) / pos_count
+    return loss.mean()
+
+
+class SmoothedBCELoss(nn.Module):
+    """BCE with label smoothing + class imbalance weighting + role weighting."""
+    def __init__(self, pos_weight: float = BCE_POS_WEIGHT,
+                 smoothing: float = LABEL_SMOOTHING):
+        super().__init__()
+        self.pos_weight = pos_weight
+        self.smoothing  = smoothing
+
+    def forward(self, logits: torch.Tensor,
+                labels:  torch.Tensor,
+                weights: torch.Tensor) -> torch.Tensor:
+        smooth_labels = labels * (1 - self.smoothing) + 0.5 * self.smoothing
+        pos_w = torch.tensor(self.pos_weight, device=logits.device)
+        bce   = F.binary_cross_entropy_with_logits(
+            logits, smooth_labels, pos_weight=pos_w, reduction="none"
+        )
+        return bce.mean()
+
+
+================================================================================
+
+
+# Utilities
+
+def sigmoid_np(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def platt_calibrate(val_logits: np.ndarray, val_labels: np.ndarray):
+    cal = LogisticRegression(C=1e6, max_iter=1000)
+    cal.fit(val_logits.reshape(-1, 1), val_labels.astype(int))
+    return cal
+
+
+================================================================================
+
+
+
+# Data Splitting
+
+def stratified_split(df: pd.DataFrame, random_state: int = SPLIT_SEED):
+    if "CVE_ID" not in df.columns:
+        raise ValueError("CVE_ID column required for leakage-free splitting")
+
+    # Split CVE IDs into train+val vs test
+
+    gss_test = GroupShuffleSplit(n_splits=1, test_size=TEST_SIZE,
+                                  random_state=random_state)
+    train_val_idx, test_idx = next(
+        gss_test.split(df, groups=df["CVE_ID"])
+    )
+    train_val_df = df.iloc[train_val_idx]
+    test_df      = df.iloc[test_idx]
+
+    # Split train+val CVE IDs into train vs val
+    rel_val = VAL_SIZE / (1.0 - TEST_SIZE)
+    gss_val = GroupShuffleSplit(n_splits=1, test_size=rel_val,
+                                 random_state=random_state)
+    train_idx, val_idx = next(
+        gss_val.split(train_val_df, groups=train_val_df["CVE_ID"])
+    )
+    train_df = train_val_df.iloc[train_idx]
+    val_df   = train_val_df.iloc[val_idx]
+
+    # Verify no CVE leakage
+    train_cves = set(train_df["CVE_ID"])
+    val_cves   = set(val_df["CVE_ID"])
+    test_cves  = set(test_df["CVE_ID"])
+    assert len(train_cves & test_cves) == 0, "Train/Test CVE leak!"
+    assert len(train_cves & val_cves)  == 0, "Train/Val CVE leak!"
+    assert len(val_cves   & test_cves) == 0, "Val/Test CVE leak!"
+
+    print(f"[Split] Train={len(train_df)} Val={len(val_df)} Test={len(test_df)}")
+    print(f"  CVEs  Train={train_df['CVE_ID'].nunique()}  "
+          f"Val={val_df['CVE_ID'].nunique()}  "
+          f"Test={test_df['CVE_ID'].nunique()}")
+    return train_df, val_df, test_df
+
+
+def build_loaders(train_df, val_df, test_df, tokenizer, seed: int = SPLIT_SEED):
+    train_ds = SiameseDataset(train_df, tokenizer)
+    rmin, rmax = train_ds.norm_stats
+    val_ds   = SiameseDataset(val_df,  tokenizer, role_min=rmin, role_max=rmax)
+    test_ds  = SiameseDataset(test_df, tokenizer, role_min=rmin, role_max=rmax)
+    g = torch.Generator(); g.manual_seed(seed)
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
+                              num_workers=0, pin_memory=True, generator=g)
+    val_loader   = DataLoader(val_ds,  batch_size=BATCH_SIZE, shuffle=False,
+                              num_workers=0, pin_memory=True)
+    test_loader  = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False,
+                              num_workers=0, pin_memory=True)
+    return train_loader, val_loader, test_loader, rmin, rmax
+
+
+================================================================================
+
+# Training
+
+def run_epoch(model, loader, criterion, optimizer, scheduler,
+              scaler, device, training: bool,
+              grad_accum: int = GRAD_ACCUM_STEPS) -> tuple:
+    model.train() if training else model.eval()
+    total_loss = n_batches = 0
+    all_logits, all_labels = [], []
+
+    ctx = torch.enable_grad() if training else torch.no_grad()
+    with ctx:
+        for step, batch in enumerate(tqdm(loader,
+                desc="train" if training else "eval ", leave=False)):
+            cve_in  = {"input_ids": batch["cve_input_ids"].to(device),
+                       "attention_mask": batch["cve_attention_mask"].to(device)}
+            tech_in = {"input_ids": batch["tech_input_ids"].to(device),
+                       "attention_mask": batch["tech_attention_mask"].to(device)}
+            b_labs  = batch["binary_labels"].to(device)
+            weights = batch["role_weights"].to(device)
+
+            with autocast('cuda', enabled=(scaler is not None)):
+                logits, _, _, cont_loss = model(cve_in, tech_in, b_labs)
+                bce_loss = criterion(logits, b_labs, weights)
+                loss = bce_loss + CONTRASTIVE_WEIGHT * cont_loss
+                loss = loss / grad_accum
+
+            if training:
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+
+                if (step + 1) % grad_accum == 0 or (step + 1) == len(loader):
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        scale_before = scaler.get_scale()    
+                        scaler.step(optimizer)
+                        scaler.update()
+                        scale_after = scaler.get_scale()
+
+                        if scheduler is not None and scale_after >= scale_before:
+                            scheduler.step()
+                    
+                    else:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        optimizer.step()
+                        if scheduler is not None:
+                            scheduler.step()
+
+                    optimizer.zero_grad()
+
+            total_loss += loss.item() * grad_accum
+            n_batches  += 1
+            all_logits.extend(logits.detach().cpu().float().numpy())
+            all_labels.extend(b_labs.cpu().numpy())
+
+    logits_arr = np.array(all_logits)
+    labels_arr = np.array(all_labels)
+    probs      = sigmoid_np(logits_arr)
+    preds      = (probs >= 0.5).astype(int)
+
+    acc   = (preds == labels_arr.astype(int)).mean()
+    ep_f1 = f1_score(labels_arr, preds, zero_division=0)
+    return total_loss / n_batches, float(acc), float(ep_f1), logits_arr, labels_arr
+
+def train_model(train_df, val_df, results_dir, tokenizer, device):
+    train_loader, val_loader, _, rmin, rmax = build_loaders(
+        train_df, val_df, val_df, tokenizer)
+
+    model     = SemanticLinkModel().to(device)
+    model.encoder.resize_token_embeddings(len(tokenizer))
+
+    if USE_SRL:
+    # Seed new role-tag embeddings from related words
+        with torch.no_grad():
+            emb = model.encoder.embeddings.word_embeddings.weight
+            seed_words = {
+                "<SUB>": "subject",  "</SUB>": "subject",
+                "<OBJ>": "object",   "</OBJ>": "object",
+                "<VRB>": "action",   "</VRB>": "action",
+                "<MNR>": "manner",   "</MNR>": "manner",
+                "<LOC>": "location", "</LOC>": "location",
+                "<TMP>": "time",     "</TMP>": "time",
+                "<CAU>": "cause",    "</CAU>": "cause",
+                "<NEG>": "not",      "</NEG>": "not",
+                "<MOD>": "modal",    "</MOD>": "modal",
+                "<ADV>": "however",  "</ADV>": "however",
+                "<PRP>": "purpose",  "</PRP>": "purpose",
+                "<OB2>": "indirect", "</OB2>": "indirect",
+                "<BNF>": "benefit",  "</BNF>": "benefit",
+                "<EPT>": "endpoint", "</EPT>": "endpoint",
+            }
+            for tag, seed_word in seed_words.items():   # ← inside with block
+                tag_id  = tokenizer.convert_tokens_to_ids(tag)
+                seed_id = tokenizer.convert_tokens_to_ids(seed_word)
+                if seed_id != tokenizer.unk_token_id:
+                    emb[tag_id] = emb[seed_id].clone()
+        print(f"[Model] Embedding matrix resized to {len(tokenizer)}")
+    print(f"[Model] Embedding matrix size: {len(tokenizer)}")
+    print(f"[Train] Freezing encoder for first {FREEZE_EPOCHS} epochs...")
+    model.freeze_encoder()
+    criterion = SmoothedBCELoss()
+
+    # train heads only (frozen)
+    head_params = (
+        list(model.proj.parameters()) +
+        list(model.contrast_head.parameters()) +
+        list(model.classifier.parameters()) +
+        list(model.pool.parameters())
+    )
+    optimizer = optim.AdamW(head_params, lr=LR_HEADS, weight_decay=WEIGHT_DECAY)
+
+    # only the frozen phase steps
+    freeze_steps  = math.ceil(len(train_loader) / GRAD_ACCUM_STEPS) * FREEZE_EPOCHS
+    warmup_steps  = int(freeze_steps * WARMUP_RATIO)
+    scheduler     = get_cosine_schedule_with_warmup(
+        optimizer, num_warmup_steps=warmup_steps,
+        num_training_steps=freeze_steps)
+
+    scaler = GradScaler('cuda') if torch.cuda.is_available() else None
+
+    history = {k: [] for k in
+               ("train_loss", "train_acc", "train_f1", "val_loss", "val_acc", "val_f1")}
+    best_val_f1   = 0.0
+    patience_ctr  = 0
+    epochs_done   = 0
+    best_path     = os.path.join(results_dir, "best_model.pth")
+
+    for epoch in range(1, EPOCHS + 1):
+
+        if epoch == FREEZE_EPOCHS + 1:
+            print("[Train] Unfreezing encoder — full fine-tuning begins.")
+            model.unfreeze_encoder()
+
+            param_groups = model.get_optimizer_groups(
+                LR_ENCODER, LR_HEADS, WEIGHT_DECAY)
+            optimizer = optim.AdamW(param_groups)
+
+            # only the remaining fine-tuning steps
+            remaining_steps  = (
+                math.ceil(len(train_loader) / GRAD_ACCUM_STEPS)
+                * (EPOCHS - FREEZE_EPOCHS)
+            )
+            warmup_steps_ft = max(1, int(remaining_steps * WARMUP_RATIO))
+            scheduler        = get_cosine_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=warmup_steps_ft,
+                num_training_steps=remaining_steps,
+            )
+            print(f"[Train] Fresh optimizer+scheduler | "
+                  f"remaining_steps={remaining_steps} "
+                  f"warmup={warmup_steps_ft}")
+
+        t_loss, t_acc, t_f1, _, _ = run_epoch(
+            model, train_loader, criterion, optimizer, scheduler,
+            scaler, device, training=True)
+        v_loss, v_acc, v_f1, v_logits, v_labels = run_epoch(
+            model, val_loader, criterion, None, None,
+            None, device, training=False)
+
+        history["train_loss"].append(t_loss); history["train_acc"].append(t_acc)
+        history["train_f1"].append(t_f1)
+        history["val_loss"].append(v_loss);   history["val_acc"].append(v_acc)
+        history["val_f1"].append(v_f1)
+
+        print(f"Ep {epoch:02d}/{EPOCHS} | "
+              f"Train loss={t_loss:.4f} acc={t_acc:.4f} F1={t_f1:.4f} | "
+              f"Val   loss={v_loss:.4f} acc={v_acc:.4f} F1={v_f1:.4f}")
+
+        epochs_done = epoch
+        if v_f1 > best_val_f1:
+            best_val_f1  = v_f1
+            patience_ctr = 0
+            torch.save(model.state_dict(), best_path)
+            with open(os.path.join(results_dir, "best_val_metrics.json"), "w") as f:
+                json.dump({"val_f1": v_f1, "val_acc": v_acc,
+                           "val_loss": v_loss, "epoch": epoch}, f, indent=2)
+            print(f"  ✓ Best saved  val_F1={v_f1:.4f}  @ epoch {epoch}")
+        else:
+            patience_ctr += 1
+            if patience_ctr >= PATIENCE:
+                print(f"  Early stop @ epoch {epoch}  (best epoch {epoch - PATIENCE})")
+                break
+
+    model.load_state_dict(torch.load(best_path, map_location=device))
+    print(f"[Train] Done. Epochs={epochs_done}  Best val_F1={best_val_f1:.4f}")
+    plot_history(history, results_dir)
+
+    _, _, _, v_logits_final, v_labels_final = run_epoch(
+        model, val_loader, criterion, None, None, None, device, training=False)
+    cal_model = platt_calibrate(v_logits_final, v_labels_final)
+
+    with open(os.path.join(results_dir, "platt_cal.pkl"), "wb") as f:
+        pickle.dump(cal_model, f)
+    print(f"[Calibration] Platt model fitted on val set. Threshold fixed at 0.5")
+
+    return model, epochs_done, cal_model, rmin, rmax  
+
+
+
+
+================================================================================
+
+# Interpretability Visualization
+
+================================================================================
+
+# Plots
+
+def plot_history(history: dict, results_dir: str):
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for ax, key, title in zip(axes,
+                               ["loss", "acc", "f1"],
+                               ["Loss", "Accuracy", "F1 (early stop)"]):
+        ax.plot(history[f"train_{key}"], label="Train")
+        ax.plot(history[f"val_{key}"],   label="Val")
+        ax.set_title(title); ax.set_xlabel("Epoch"); ax.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(results_dir, "training_history.png")); plt.close()
+
+def plot_embeddings(cve_embs: np.ndarray, tech_embs: np.ndarray,
+                    labels: np.ndarray, results_dir: str, seed: int):
+    """
+    Three visualizations using val/test embeddings:
+      1. t-SNE of CVE embeddings coloured by label
+      2. t-SNE of [CVE, Tech] pairs coloured by label  
+      3. Cosine similarity distribution: positive vs negative pairs
+    """
+    from sklearn.manifold import TSNE
+
+    # --- Plot 1: CVE embeddings only ---
+    print("[Viz] Running t-SNE on CVE embeddings...")
+    tsne = TSNE(n_components=2, perplexity=30, random_state=seed,
+                n_iter=1000, init="pca")
+    cve_2d = tsne.fit_transform(cve_embs)
+
+    plt.figure(figsize=(7, 5))
+    for lbl, color, name in [(1, "#2980b9", "Positive"), (0, "#e74c3c", "Negative")]:
+        mask = labels == lbl
+        plt.scatter(cve_2d[mask, 0], cve_2d[mask, 1],
+                    c=color, alpha=0.6, s=18, label=name)
+    plt.title(f"t-SNE: CVE Embeddings (seed={seed})")
+    plt.legend(); plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "tsne_cve.png"), dpi=150); plt.close()
+
+    # --- Plot 2: CVE + Tech interleaved ---
+    print("[Viz] Running t-SNE on CVE+Tech joint embeddings...")
+    joint = np.concatenate([cve_embs, tech_embs], axis=0)
+    joint_labels = np.concatenate([labels, labels])
+    joint_source = np.array(["CVE"] * len(labels) + ["Tech"] * len(labels))
+
+    tsne2 = TSNE(n_components=2, perplexity=30, random_state=seed,
+                 n_iter=1000, init="pca")
+    joint_2d = tsne2.fit_transform(joint)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    styles = [("CVE", "o"), ("Tech", "^")]
+    colors = {1: "#2980b9", 0: "#e74c3c"}
+    for src, marker in styles:
+        for lbl, color in colors.items():
+            mask = (joint_source == src) & (joint_labels == lbl)
+            ax.scatter(joint_2d[mask, 0], joint_2d[mask, 1],
+                       c=color, marker=marker, alpha=0.5, s=18,
+                       label=f"{src} {'Pos' if lbl==1 else 'Neg'}")
+    ax.legend(fontsize=8); ax.set_title(f"t-SNE: CVE & Tech Embeddings (seed={seed})")
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "tsne_joint.png"), dpi=150); plt.close()
+
+    # --- Plot 3: Cosine similarity distribution ---
+    cve_norm  = cve_embs / (np.linalg.norm(cve_embs, axis=1, keepdims=True) + 1e-8)
+    tech_norm = tech_embs / (np.linalg.norm(tech_embs, axis=1, keepdims=True) + 1e-8)
+    cos_sim   = (cve_norm * tech_norm).sum(axis=1)
+
+    plt.figure(figsize=(7, 4))
+    plt.hist(cos_sim[labels == 1], bins=40, alpha=0.65,
+             color="#2980b9", label="Positive pairs")
+    plt.hist(cos_sim[labels == 0], bins=40, alpha=0.65,
+             color="#e74c3c", label="Negative pairs")
+    plt.axvline(cos_sim[labels == 1].mean(), color="#1a5276", linestyle="--",
+                linewidth=1.5, label=f"Pos mean={cos_sim[labels==1].mean():.3f}")
+    plt.axvline(cos_sim[labels == 0].mean(), color="#922b21", linestyle="--",
+                linewidth=1.5, label=f"Neg mean={cos_sim[labels==0].mean():.3f}")
+    plt.xlabel("Cosine Similarity"); plt.ylabel("Count")
+    plt.title(f"CVE–Technique Cosine Similarity (seed={seed})")
+    plt.legend(); plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "cosine_similarity_dist.png"), dpi=150)
+    plt.close()
+
+    print(f"[Viz] Embeddings plots saved → {results_dir}")
+
+
+def plot_srl_attention(model, tokenizer, device, results_dir,
+                       cve_text: str, tech_text: str,
+                       label: int, pair_id: int):
+    """
+    Visualize AttentionPooling weights over tokens for a CVE-Technique pair.
+    Shows which tokens the model attends to most.
+    """
+    model.eval()
+    dataset = SiameseDataset(
+        pd.DataFrame([{"CVE_text": cve_text, "Technique_text": tech_text,
+                       "label": label, "role_score": 0.0, "CVE_ID": "viz"}]),
+        tokenizer, role_min=0.0, role_max=1.0
+    )
+    batch = dataset[0]
+
+    cve_in  = {"input_ids":      batch["cve_input_ids"].unsqueeze(0).to(device),
+               "attention_mask": batch["cve_attention_mask"].unsqueeze(0).to(device)}
+    tech_in = {"input_ids":      batch["tech_input_ids"].unsqueeze(0).to(device),
+               "attention_mask": batch["tech_attention_mask"].unsqueeze(0).to(device)}
+
+    with torch.no_grad():
+        # Get token embeddings after alignment
+        cve_seq  = model._encode(cve_in)
+        tech_seq = model._encode(tech_in)
+        cve_mask  = cve_in["attention_mask"]
+        tech_mask = tech_in["attention_mask"]
+
+        aligned_cve, aligned_tech = model.align(cve_seq, tech_seq, cve_mask, tech_mask)
+        cve_combined  = (cve_seq  + aligned_cve)  / 2.0
+        tech_combined = (tech_seq + aligned_tech) / 2.0
+
+        # Get attention weights from AttentionPooling
+        def get_attn_weights(pool_layer, token_emb, mask):
+            scores  = pool_layer.attn(token_emb).squeeze(-1)
+            scores  = scores.masked_fill(mask == 0, -1e4)
+            weights = F.softmax(scores, dim=1)
+            return weights.squeeze(0).cpu().numpy()
+
+        cve_weights  = get_attn_weights(model.pool, cve_combined,  cve_mask)
+        tech_weights = get_attn_weights(model.pool, tech_combined, tech_mask)
+
+    # Decode tokens
+    cve_tokens  = tokenizer.convert_ids_to_tokens(
+        batch["cve_input_ids"].tolist())
+    tech_tokens = tokenizer.convert_ids_to_tokens(
+        batch["tech_input_ids"].tolist())
+
+    # Only show non-padding tokens
+    cve_len  = int(batch["cve_attention_mask"].sum())
+    tech_len = int(batch["tech_attention_mask"].sum())
+    cve_tokens  = cve_tokens[:cve_len]
+    tech_weights = tech_weights[:tech_len]
+    tech_tokens  = tech_tokens[:tech_len]
+    cve_weights  = cve_weights[:cve_len]
+
+    # Colour SRL tokens differently
+    srl_tags = [t.replace("Ġ", "") for t in
+                ["<SUB>","</SUB>","<OBJ>","</OBJ>","<VRB>","</VRB>",
+                 "<MNR>","</MNR>","<LOC>","</LOC>","<TMP>","</TMP>",
+                 "<CAU>","</CAU>","<NEG>","</NEG>","<MOD>","</MOD>"]]
+
+    def plot_bar(tokens, weights, title, ax):
+        colors = ["#e67e22" if t.strip("<>/") in
+                  [s.strip("<>/") for s in srl_tags]
+                  else "#2980b9" for t in tokens]
+        ax.bar(range(len(tokens)), weights, color=colors)
+        ax.set_xticks(range(len(tokens)))
+        ax.set_xticklabels(tokens, rotation=90, fontsize=6)
+        ax.set_title(title, fontsize=9)
+        ax.set_ylabel("Attention weight")
+
+    fig, axes = plt.subplots(2, 1, figsize=(14, 7))
+    lbl_str = "Positive" if label == 1 else "Negative"
+    plot_bar(cve_tokens,  cve_weights,
+             f"CVE Attention Weights — {lbl_str} pair {pair_id}", axes[0])
+    plot_bar(tech_tokens, tech_weights,
+             f"Technique Attention Weights — {lbl_str} pair {pair_id}", axes[1])
+
+    # Legend
+    from matplotlib.patches import Patch
+    axes[0].legend(handles=[
+        Patch(color="#e67e22", label="SRL role token"),
+        Patch(color="#2980b9", label="Content token")
+    ], fontsize=8)
+
+    plt.tight_layout()
+    fname = os.path.join(results_dir, f"srl_attention_pair_{pair_id}.png")
+    plt.savefig(fname, dpi=150)
+    plt.close()
+    print(f"[Viz] SRL attention plot saved → {fname}")
+
+
+def plot_role_score_distribution(test_df, results_dir):
+    plt.figure(figsize=(7, 4))
+    pos = test_df[test_df["label"] == 1]["role_score"]
+    neg = test_df[test_df["label"] == 0]["role_score"]
+    plt.hist(pos, bins=20, alpha=0.65, color="#2980b9", label=f"Positive (n={len(pos)})")
+    plt.hist(neg, bins=20, alpha=0.65, color="#e74c3c", label=f"Negative (n={len(neg)})")
+    plt.xlabel("Verb Match Count (Role Score)")
+    plt.ylabel("Count")
+    plt.title("Role Score Distribution: Positive vs Negative Pairs")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "role_score_distribution.png"), dpi=150)
+    plt.close()
+    print("[Viz] Role score distribution saved")
+
+
+def plot_topk_precision(probs_arr, b_true, results_dir, k_values=None):
+    """
+    For each CVE, rank all its candidate techniques by confidence.
+    Show Precision@K — what fraction of top-K are true positives.
+    """
+    if k_values is None:
+        k_values = [1, 3, 5, 10, 15, 20]
+
+    # Group by CVE  need test_df for CVE_ID
+    # Since we don't have per-CVE grouping here, compute global ranked precision
+    sorted_idx = np.argsort(probs_arr)[::-1]
+    sorted_labels = b_true[sorted_idx]
+
+    precisions = []
+    for k in k_values:
+        top_k_labels = sorted_labels[:k]
+        precisions.append(top_k_labels.mean())
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(k_values, precisions, marker="o", color="#2980b9", lw=2)
+    for k, p in zip(k_values, precisions):
+        plt.annotate(f"{p:.2f}", (k, p), textcoords="offset points",
+                     xytext=(0, 8), ha="center", fontsize=9)
+    plt.axhline(b_true.mean(), color="#e74c3c", linestyle="--",
+                lw=1.5, label=f"Random baseline ({b_true.mean():.2f})")
+    plt.xlabel("K (top-K candidates reviewed)")
+    plt.ylabel("Precision@K")
+    plt.title("Precision at Top-K — CVE-to-ATT&CK Ranking")
+    plt.legend(); plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "precision_at_k.png"), dpi=150)
+    plt.close()
+    print("[Viz] Precision@K plot saved")
+
+
+
+def plot_true_positive_rank(test_df, probs_arr, b_true, results_dir):
+    """
+    For each CVE, find the rank of its true positive technique.
+    Plot distribution of ranks — lower is better.
+    """
+    test_df_reset = test_df.reset_index(drop=True)
+    test_df_reset["prob"]  = probs_arr
+    test_df_reset["label"] = b_true.astype(int)
+
+    ranks = []
+    for cve_id, group in test_df_reset.groupby("CVE_ID"):
+        if group["label"].sum() == 0:
+            continue
+        group_sorted = group.sort_values("prob", ascending=False).reset_index(drop=True)
+        # Find rank of first true positive (1-indexed)
+        pos_ranks = group_sorted[group_sorted["label"] == 1].index.tolist()
+        if pos_ranks:
+            ranks.append(pos_ranks[0] + 1)  # 1-indexed
+
+    if not ranks:
+        print("[Viz] No per-CVE rank data available")
+        return
+
+    ranks = np.array(ranks)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+    # Left  histogram of ranks
+    axes[0].hist(ranks, bins=20, color="#2980b9", alpha=0.8, edgecolor="white")
+    axes[0].axvline(np.median(ranks), color="#e74c3c", linestyle="--",
+                    lw=2, label=f"Median rank={np.median(ranks):.1f}")
+    axes[0].axvline(np.mean(ranks), color="#e67e22", linestyle="--",
+                    lw=2, label=f"Mean rank={np.mean(ranks):.1f}")
+    axes[0].set_xlabel("Rank of first true positive")
+    axes[0].set_ylabel("Number of CVEs")
+    axes[0].set_title("True Positive Rank Distribution")
+    axes[0].legend()
+
+    # Right  cumulative: what % of CVEs have TP in top-K
+    max_k = min(20, int(ranks.max()))
+    ks = range(1, max_k + 1)
+    cumulative = [np.mean(ranks <= k) for k in ks]
+    axes[1].plot(ks, cumulative, marker="o", color="#2980b9", lw=2)
+    axes[1].set_xlabel("K")
+    axes[1].set_ylabel("Fraction of CVEs with TP in top-K")
+    axes[1].set_title("Cumulative Recall@K")
+    axes[1].set_ylim(0, 1.05)
+    for k in [1, 3, 5, 10]:
+        if k <= max_k:
+            axes[1].annotate(f"{np.mean(ranks<=k):.2f}",
+                             (k, np.mean(ranks<=k)),
+                             textcoords="offset points",
+                             xytext=(0, 8), ha="center", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "true_positive_rank.png"), dpi=150)
+    plt.close()
+    print(f"[Viz] TP rank plot saved | Median rank={np.median(ranks):.1f} "
+          f"| Recall@5={np.mean(ranks<=5):.3f}")
+
+
+def plot_error_analysis(probs_arr, b_true, b_preds, results_dir):
+    """
+    Breaks down errors by confidence bucket.
+    Shows false positive and false negative rates per confidence band.
+    """
+    bins = np.linspace(0, 1, 11)
+    bin_labels = [f"{bins[i]:.1f}-{bins[i+1]:.1f}" for i in range(len(bins)-1)]
+
+    fp_counts, fn_counts, tp_counts, tn_counts = [], [], [], []
+
+    for i in range(len(bins)-1):
+        mask = (probs_arr >= bins[i]) & (probs_arr < bins[i+1])
+        if mask.sum() == 0:
+            fp_counts.append(0); fn_counts.append(0)
+            tp_counts.append(0); tn_counts.append(0)
+            continue
+        t, p = b_true[mask].astype(int), b_preds[mask]
+        fp_counts.append(int(((p==1) & (t==0)).sum()))
+        fn_counts.append(int(((p==0) & (t==1)).sum()))
+        tp_counts.append(int(((p==1) & (t==1)).sum()))
+        tn_counts.append(int(((p==0) & (t==0)).sum()))
+
+    x = np.arange(len(bin_labels))
+    width = 0.35
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.bar(x - width/2, fp_counts, width, label="False Positives", color="#e74c3c", alpha=0.8)
+    ax.bar(x + width/2, fn_counts, width, label="False Negatives", color="#e67e22", alpha=0.8)
+    ax.set_xlabel("Confidence bucket")
+    ax.set_ylabel("Count")
+    ax.set_title("Error Distribution by Confidence — False Positives vs False Negatives")
+    ax.set_xticks(x); ax.set_xticklabels(bin_labels, rotation=45)
+    ax.legend(); plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "error_analysis.png"), dpi=150)
+    plt.close()
+    print("[Viz] Error analysis plot saved")
+
+
+def compute_ranking_metrics(test_df, probs_arr, b_true, results_dir):
+    from sklearn.metrics import (
+        coverage_error,
+        label_ranking_loss,
+        label_ranking_average_precision_score
+    )
+
+    test_df_reset = test_df.reset_index(drop=True)
+    test_df_reset["prob"]  = probs_arr
+    test_df_reset["label"] = b_true.astype(int)
+
+    # Build per-CVE matrices
+    # Get unique CVEs and unique techniques
+    cve_ids   = test_df_reset["CVE_ID"].unique()
+    tech_ids  = test_df_reset["Technique_text"].unique()
+
+    tech_to_idx = {t: i for i, t in enumerate(tech_ids)}
+    n_cves      = len(cve_ids)
+    n_techs     = len(tech_ids)
+
+    # y_true and y_score matrices: shape (n_CVEs, n_techniques)
+    y_true  = np.zeros((n_cves, n_techs), dtype=np.float32)
+    y_score = np.zeros((n_cves, n_techs), dtype=np.float32)
+
+    for cve_idx, cve_id in enumerate(cve_ids):
+        group = test_df_reset[test_df_reset["CVE_ID"] == cve_id]
+        for _, row in group.iterrows():
+            tech_idx = tech_to_idx[row["Technique_text"]]
+            y_true[cve_idx,  tech_idx] = row["label"]
+            y_score[cve_idx, tech_idx] = row["prob"]
+
+    # Filter out CVEs with no positive labels 
+    # sklearn metrics require at least one positive per row
+    valid_mask = y_true.sum(axis=1) > 0
+    y_true_v   = y_true[valid_mask]
+    y_score_v  = y_score[valid_mask]
+
+    print(f"[Ranking] Valid CVEs (with ≥1 positive): {valid_mask.sum()} / {n_cves}")
+
+    # sklearn multi-label ranking metrics 
+    # Coverage Error: avg number of top predictions needed to cover all ground truths
+    # Best value = avg number of true labels per CVE
+    cov_err = coverage_error(y_true_v, y_score_v)
+    avg_labels = y_true_v.sum(axis=1).mean()  # best possible coverage error
+
+    # Label Ranking Loss: fraction of incorrectly ordered pairs
+    # Best value = 0
+    rank_loss = label_ranking_loss(y_true_v, y_score_v)
+    print(f"  [Debug] Matrix shape: y_true={y_true_v.shape}, "
+      f"sparsity={1 - y_true_v.mean():.3f}, "
+      f"avg_positives_per_CVE={y_true_v.sum(axis=1).mean():.2f}")
+
+    # LRAP: fraction of higher-ranked labels that are true labels
+    # Best value = 1
+    lrap = label_ranking_average_precision_score(y_true_v, y_score_v)
+
+    # Recall@K 
+    # For each CVE, check what fraction of true labels appear in top-K
+    def recall_at_k(y_true_mat, y_score_mat, k):
+        recalls = []
+        for i in range(len(y_true_mat)):
+            n_pos = int(y_true_mat[i].sum())
+            if n_pos == 0:
+                continue
+            top_k_idx    = np.argsort(y_score_mat[i])[::-1][:k]
+            hits         = y_true_mat[i][top_k_idx].sum()
+            recalls.append(hits / n_pos)
+        return float(np.mean(recalls))
+
+    r_at_1  = recall_at_k(y_true_v, y_score_v, 1)
+    r_at_3  = recall_at_k(y_true_v, y_score_v, 3)
+    r_at_5  = recall_at_k(y_true_v, y_score_v, 5)
+    r_at_10 = recall_at_k(y_true_v, y_score_v, 10)
+
+    # Error Rate
+    b_preds    = (probs_arr >= 0.5).astype(int)
+    error_rate = 1.0 - (b_preds == b_true.astype(int)).mean()
+
+    metrics = {
+        "error_rate":       float(error_rate),
+        "coverage_error":   float(cov_err),
+        "avg_labels":       float(avg_labels),   # best possible coverage error
+        "ranking_loss":     float(rank_loss),
+        "lrap":             float(lrap),
+        "recall_at_1":      r_at_1,
+        "recall_at_3":      r_at_3,
+        "recall_at_5":      r_at_5,
+        "recall_at_10":     r_at_10,
+    }
+
+    print("\n[Ranking Metrics]")
+    print(f"  Error Rate        : {error_rate:.4f}")
+    print(f"  Coverage Error    : {cov_err:.4f}  (best possible = {avg_labels:.4f})")
+    print(f"  Ranking Loss      : {rank_loss:.4f}  (lower is better, best=0)")
+    print(f"  LRAP              : {lrap:.4f}  (higher is better, best=1)")
+    print(f"  Recall@1          : {r_at_1:.4f}")
+    print(f"  Recall@3          : {r_at_3:.4f}")
+    print(f"  Recall@5          : {r_at_5:.4f}")
+    print(f"  Recall@10         : {r_at_10:.4f}")
+
+    with open(os.path.join(results_dir, "ranking_metrics.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"[Ranking Metrics] Saved → {results_dir}/ranking_metrics.json")
+
+    return metrics
+
+
+def plot_calibration(val_logits: np.ndarray, val_labels: np.ndarray,
+                     cal_model, results_dir: str, seed: int):
+    from sklearn.calibration import calibration_curve
+
+    raw_probs = sigmoid_np(val_logits)
+    cal_probs = cal_model.predict_proba(val_logits.reshape(-1, 1))[:, 1]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+    # Left: Reliability diagram 
+    frac_pos_raw, mean_pred_raw = calibration_curve(
+        val_labels.astype(int), raw_probs, n_bins=10, strategy="uniform")
+    frac_pos_cal, mean_pred_cal = calibration_curve(
+        val_labels.astype(int), cal_probs, n_bins=10, strategy="uniform")
+
+    # Get sample counts per bin for calibrated probs
+    bin_edges  = np.linspace(0, 1, 11)
+    bin_counts = np.histogram(cal_probs, bins=bin_edges)[0]
+    # Only keep counts for bins that actually appear in the curve
+    # (uniform strategy drops empty bins, so we match by position)
+    nonempty_counts = bin_counts[bin_counts > 0]
+
+    axes[0].plot([0, 1], [0, 1], "k--", lw=1, label="Perfect calibration")
+    axes[0].plot(mean_pred_raw, frac_pos_raw, marker="o", color="#e74c3c",
+                 lw=2, label="Before Platt")
+    axes[0].plot(mean_pred_cal, frac_pos_cal, marker="s", color="#2980b9",
+                 lw=2, label="After Platt")
+
+    # Annotate each calibrated point with its sample count
+    for x, y, n in zip(mean_pred_cal, frac_pos_cal, nonempty_counts):
+        axes[0].annotate(f"n={n}", (x, y),
+                         textcoords="offset points",
+                         xytext=(0, 8), ha="center", fontsize=7,
+                         color="#1a5276")
+
+    axes[0].set_xlabel("Mean predicted probability")
+    axes[0].set_ylabel("Fraction of positives")
+    axes[0].set_title(f"Reliability Diagram (seed={seed})")
+    axes[0].legend(); axes[0].set_xlim(0, 1); axes[0].set_ylim(0, 1)
+
+    # Right: Score distribution before vs after 
+    axes[1].hist(raw_probs[val_labels == 1], bins=30, alpha=0.5,
+                 color="#e74c3c", label="Raw — Positive")
+    axes[1].hist(raw_probs[val_labels == 0], bins=30, alpha=0.5,
+                 color="#e67e22", label="Raw — Negative")
+    axes[1].hist(cal_probs[val_labels == 1], bins=30, alpha=0.5,
+                 color="#2980b9", label="Calibrated — Positive")
+    axes[1].hist(cal_probs[val_labels == 0], bins=30, alpha=0.5,
+                 color="#1a5276", label="Calibrated — Negative")
+    axes[1].axvline(0.5, color="black", linestyle="--", lw=1.5, label="Threshold=0.5")
+    axes[1].set_xlabel("Probability")
+    axes[1].set_ylabel("Count")
+    axes[1].set_title(f"Score Distribution Before/After Platt (seed={seed})")
+    axes[1].legend(fontsize=7)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "platt_calibration.png"), dpi=150)
+    plt.close()
+    print(f"[Viz] Platt calibration plot saved → {results_dir}")
+
+================================================================================
+
+# Evaluate Model
+
+================================================================================
+
+
+
+# Evaluation
+
+def evaluate_model(model, test_df, tokenizer, device, results_dir,
+                   role_min, role_max, cal_model, seed: int = 42):
+    test_ds  = SiameseDataset(test_df, tokenizer,
+                               role_min=role_min, role_max=role_max)
+    test_ldr = DataLoader(test_ds, batch_size=BATCH_SIZE,
+                          shuffle=False, num_workers=0, pin_memory=True)
+    criterion = SmoothedBCELoss()
+
+    _, _, _, logits_arr, b_true = run_epoch(
+        model, test_ldr, criterion, None, None, None, device, training=False)
+
+    probs_arr = cal_model.predict_proba(logits_arr.reshape(-1, 1))[:, 1]
+
+    plot_calibration(logits_arr, b_true, cal_model, results_dir, seed)
+
+    # Threshold
+    b_preds = (probs_arr >= 0.5).astype(int)
+
+    # Collect embeddings for visualization
+    model.eval()
+    all_cve_embs, all_tech_embs = [], []
+    test_ds_viz = SiameseDataset(test_df, tokenizer,
+                                  role_min=role_min, role_max=role_max)
+    viz_ldr = DataLoader(test_ds_viz, batch_size=BATCH_SIZE,
+                         shuffle=False, num_workers=0)
+    with torch.no_grad():
+        for batch in viz_ldr:
+            cve_in  = {"input_ids": batch["cve_input_ids"].to(device),
+                       "attention_mask": batch["cve_attention_mask"].to(device)}
+            tech_in = {"input_ids": batch["tech_input_ids"].to(device),
+                       "attention_mask": batch["tech_attention_mask"].to(device)}
+            _, cve_e, tech_e, _ = model(cve_in, tech_in)
+            all_cve_embs.append(cve_e.cpu().float().numpy())
+            all_tech_embs.append(tech_e.cpu().float().numpy())
+    cve_embs_np  = np.concatenate(all_cve_embs,  axis=0)
+    tech_embs_np = np.concatenate(all_tech_embs, axis=0)
+    plot_embeddings(cve_embs_np, tech_embs_np, b_true, results_dir, seed)
+
+    # SRL attention visualization — 3 examples
+    test_df_reset = test_df.reset_index(drop=True)
+    pos_idx   = test_df_reset[test_df_reset["label"] == 1].index[0]
+    neg_idx   = test_df_reset[test_df_reset["label"] == 0].index[0]
+    wrong_mask = (b_preds != b_true.astype(int))
+    border_idx = int(np.where(wrong_mask)[0][0]) if wrong_mask.any() else pos_idx
+
+    for pid, idx in enumerate([pos_idx, neg_idx, border_idx]):
+        row = test_df_reset.iloc[idx]
+        plot_srl_attention(model, tokenizer, device, results_dir,
+                           row["CVE_text"], row["Technique_text"],
+                           int(row["label"]), pair_id=pid)
+
+    # Role score distribution
+    plot_role_score_distribution(test_df, results_dir)
+    plot_topk_precision(probs_arr, b_true, results_dir)
+    plot_true_positive_rank(test_df, probs_arr, b_true, results_dir)
+    plot_error_analysis(probs_arr, b_true, b_preds, results_dir)
+    ranking_metrics = compute_ranking_metrics(test_df, probs_arr, b_true, results_dir)
+    
+    report = classification_report(b_true.astype(int), b_preds, output_dict=True)
+    try:
+        auc = roc_auc_score(b_true, probs_arr)
+        ap  = average_precision_score(b_true, probs_arr)
+    except Exception:
+        auc = ap = float("nan")
+
+    pos_key = "1" if "1" in report else "1.0"
+    metrics = {
+        "accuracy":        float(report["accuracy"]),
+        "precision":       float(report.get(pos_key, {}).get("precision", 0.0)),
+        "recall":          float(report.get(pos_key, {}).get("recall",    0.0)),
+        "f1_score":        float(report.get(pos_key, {}).get("f1-score",  0.0)),
+        "roc_auc":         float(auc),
+        "avg_precision":   float(ap),
+        **ranking_metrics 
+    }
+    print("\n[Test Metrics]")
+    for k, v in metrics.items():
+        print(f"  {k:<16}: {v:.4f}")
+
+    pd.DataFrame({
+        "CVE_text":        [r["CVE_text"]       for r in [test_ds[i] for i in range(len(test_ds))]],
+        "Technique_text":  [r["Technique_text"] for r in [test_ds[i] for i in range(len(test_ds))]],
+        "true_label":      b_true.astype(int),
+        "predicted_label": b_preds,
+        "confidence_prob": probs_arr,
+        "correct":         b_preds == b_true.astype(int),
+    }).to_csv(os.path.join(results_dir, "test_results_detailed.csv"), index=False)
+
+    cm = confusion_matrix(b_true.astype(int), b_preds)
+    plt.figure(figsize=(5, 4))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=["Neg", "Pos"], yticklabels=["Neg", "Pos"])
+    plt.title("Confusion Matrix"); plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "confusion_matrix.png")); plt.close()
+
+    plt.figure(figsize=(7, 3))
+    plt.hist(probs_arr[b_preds == b_true.astype(int)], alpha=0.6,
+             bins=30, label="Correct",   color="#2980b9")
+    plt.hist(probs_arr[b_preds != b_true.astype(int)], alpha=0.6,
+             bins=30, label="Incorrect", color="#e74c3c")
+    plt.xlabel("Confidence (sigmoid prob)"); plt.ylabel("Count")
+    plt.legend(); plt.title("Confidence Distribution"); plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "confidence_distribution.png")); plt.close()
+
+    if not math.isnan(auc):
+        fpr, tpr, _ = roc_curve(b_true.astype(int), probs_arr)
+        plt.figure(figsize=(5, 4))
+        plt.plot(fpr, tpr, color="#2980b9", lw=2, label=f"AUC={auc:.4f}")
+        plt.plot([0, 1], [0, 1], "k--", lw=1)
+        plt.xlabel("FPR"); plt.ylabel("TPR")
+        plt.title("ROC Curve"); plt.legend(); plt.tight_layout()
+        plt.savefig(os.path.join(results_dir, "roc_curve.png")); plt.close()
+
+    if not math.isnan(ap):
+        prec, rec, _ = precision_recall_curve(b_true.astype(int), probs_arr)
+        plt.figure(figsize=(5, 4))
+        plt.plot(rec, prec, color="#e67e22", lw=2, label=f"AP={ap:.4f}")
+        plt.xlabel("Recall"); plt.ylabel("Precision")
+        plt.title("Precision-Recall Curve"); plt.legend(); plt.tight_layout()
+        plt.savefig(os.path.join(results_dir, "pr_curve.png")); plt.close()
+
+
+    return metrics
+
+================================================================================
+
+# Main
+
+================================================================================
+
+# Main
+
+def main():
+    print("=" * 62)
+    print("  SemanticLink CVE-to-ATT&CK Siamese Model")
+    print(f"  SRL mode: {'ON' if USE_SRL else 'OFF'}")
+    print("=" * 62)
+
+    df = load_srl_dataset(DATASET_PATH) if USE_SRL else load_raw_dataset(DATASET_PATH)
+    if df.empty:
+        print("[Error] Empty dataset."); return
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    if USE_SRL:
+        tokenizer.add_special_tokens({"additional_special_tokens": SPECIAL_ROLE_TOKENS})
+        print(f"[Tokenizer] Vocabulary size: {len(tokenizer)}")  # 50293
+    
+    device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[Device] {device}  |  AMP={'yes' if torch.cuda.is_available() else 'no'}")
+
+    os.makedirs(BASE_DIR, exist_ok=True)
+    all_results = []
+
+    print(f"\n[Split] SPLIT_SEED={SPLIT_SEED} — shared across all seeds")
+    train_df, val_df, test_df = stratified_split(df, random_state=SPLIT_SEED)
+    print(f"[Split] Test set locked: {len(test_df)} samples")
+
+    for seed in SEEDS:
+        print("\n" + "=" * 62)
+        print(f"  SEED {seed}")
+        print("=" * 62)
+        set_all_seeds(seed)
+
+        results_dir = os.path.join(BASE_DIR, f"results_seed_{seed}")
+        os.makedirs(results_dir, exist_ok=True)
+
+        best_path = os.path.join(results_dir, "best_model.pth")
+        if os.path.exists(best_path):
+            print(f"[Model] Loading {best_path}")
+            model = SemanticLinkModel().to(device)
+
+            model.encoder.resize_token_embeddings(len(tokenizer))
+            
+            model.load_state_dict(torch.load(best_path, map_location=device))
+            _, _, _, rmin, rmax = build_loaders(train_df, val_df, test_df, tokenizer)
+            epochs_done = 0
+            cal_model = None
+        else:
+            model, epochs_done, cal_model, rmin, rmax = train_model(
+                train_df, val_df, results_dir, tokenizer, device)
+
+        if cal_model is None:
+            # Platt calibration
+            val_ds  = SiameseDataset(val_df, tokenizer, role_min=rmin, role_max=rmax)
+            val_ldr = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+            crit    = SmoothedBCELoss()
+            _, _, _, v_log, v_lab = run_epoch(
+                model, val_ldr, crit, None, None, None, device, training=False)
+            cal_model = platt_calibrate(v_log, v_lab)
+            with open(os.path.join(results_dir, "platt_cal.pkl"), "wb") as f:
+                pickle.dump(cal_model, f)
+            print("[Calibration] Platt fitted on val. Threshold fixed at 0.5")
+
+        metrics = evaluate_model(model, test_df, tokenizer, device,
+                          results_dir, rmin, rmax, cal_model)
+
+
+        seed_result = {"model": MODEL_NAME, "seed": seed,
+                       "srl_mode": USE_SRL,
+                       "epochs_trained": epochs_done,
+                       "threshold_used": 0.5,
+                       **metrics}
+        all_results.append(seed_result)
+        with open(os.path.join(results_dir,
+                               f"metrics_seed_{seed}.json"), "w") as f:
+            json.dump(seed_result, f, indent=2)
+        print(f"[Done] Seed {seed} → {results_dir}/")
+
+    print("\n" + "=" * 62)
+    print("  FINAL RESULTS  (mean ± std across seeds)")
+    print("=" * 62)
+    metric_keys = ["accuracy", "precision", "recall",
+                   "f1_score", "roc_auc", "avg_precision"]
+    summary = {"model": MODEL_NAME, "n_seeds": len(SEEDS), "srl_mode": USE_SRL}
+    rows    = []
+    for m in metric_keys:
+        vals = [r[m] for r in all_results
+                if not math.isnan(r.get(m, float("nan")))]
+        mean_, std_ = float(np.mean(vals)), float(np.std(vals))
+        summary[f"{m}_mean"] = mean_
+        summary[f"{m}_std"]  = std_
+        print(f"  {m:<18}: {mean_:.4f} ± {std_:.4f}")
+        rows.append({"metric": m, "mean": mean_, "std": std_})
+
+    with open(os.path.join(BASE_DIR, "final_summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+
+    pd.DataFrame(rows).to_csv(
+        os.path.join(BASE_DIR, "final_summary.csv"), index=False)
+
+    print(f"\n[Summary] Saved → {BASE_DIR}/final_summary.json + .csv")
+
+
+if __name__ == "__main__":
+    main()
+
+================================================================================
+

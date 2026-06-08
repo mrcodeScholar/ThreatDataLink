@@ -1,0 +1,17 @@
+{
+  "model": "roberta-large",
+  "n_seeds": 6,
+  "srl_mode": true,
+  "accuracy_mean": 0.9343434343434344,
+  "accuracy_std": 0.0015282069640181336,
+  "precision_mean": 0.8413330276328845,
+  "precision_std": 0.0076907139025378345,
+  "recall_mean": 0.9086471408647142,
+  "recall_std": 0.011179372065468181,
+  "f1_score_mean": 0.873605271371901,
+  "f1_score_std": 0.003136673202450621,
+  "roc_auc_mean": 0.9654753441102085,
+  "roc_auc_std": 0.0030513797996427052,
+  "avg_precision_mean": 0.8852815737113208,
+  "avg_precision_std": 0.011498558305043668
+}

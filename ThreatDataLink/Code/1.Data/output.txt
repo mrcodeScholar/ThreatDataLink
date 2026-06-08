@@ -1,0 +1,74 @@
+# Install mitreattack-python if not already installed
+# pip install mitreattack-python
+
+# %%
+import mitreattack.attackToExcel.attackToExcel as attackToExcel
+import mitreattack.attackToExcel.stixToDf as stixToDf
+
+# Download and parse ATT&CK STIX data
+attackdata = attackToExcel.get_stix_data("enterprise-attack")
+techniques_data = stixToDf.techniquesToDf(attackdata, "enterprise-attack")
+
+# Extract the techniques DataFrame
+techniques_df = techniques_data["techniques"]
+
+# Print all techniques with ID containing 'T1102'
+print(techniques_df[techniques_df["ID"].str.contains("T1102")]["name"])
+
+# Extract citations mentioning LOLBAS Wmic
+citations_df = techniques_data["citations"]
+print(citations_df[citations_df["reference"].str.contains("LOLBAS Wmic")])
+
+# %%
+# Print column names (for reference)
+print(techniques_df.columns)
+
+# %%
+# Keep only 'ID' and 'description' columns
+techniques_df = techniques_df[["ID", "description"]]
+
+# %%
+# Save to Excel
+techniques_df.to_excel("techniques.xlsx", index=False)
+
+
+================================================================================
+
+pip install pandas
+
+================================================================================
+
+import pandas as pd
+
+cve = pd.read_csv("Att&ckToCveMappings.csv")
+print(cve['CVE ID'].value_counts())
+
+================================================================================
+
+import pandas as pd
+
+# Load the dataset
+df = pd.read_excel("cve_single_technique.xlsx")
+
+attack
+
+
+================================================================================
+
+# Clean the data first
+techniques = df['MITRE_Technique_Numbers'].dropna().astype(str).str.strip()
+
+# Now count techniques
+main_tech = techniques[~techniques.str.contains('.', regex=False)]
+sub_tech = techniques[techniques.str.contains('.', regex=False)]
+
+print(f"Unique main techniques: {main_tech.nunique()}")
+print(f"Unique sub-techniques: {sub_tech.nunique()}")
+
+
+================================================================================
+
+df['CVE_ID'].nunique()
+
+================================================================================
+

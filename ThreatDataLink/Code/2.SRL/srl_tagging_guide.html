@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRL Tagging Rules — Interactive Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;1,9..144,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0e0f11;
+  --surface: #16181c;
+  --surface2: #1e2128;
+  --border: #2a2d36;
+  --border2: #363a47;
+  --text: #e8e9ed;
+  --muted: #7a7f8e;
+  --faint: #3a3d4a;
+
+  --arg0: #c084fc;   --arg0-bg: #1e1028;   --arg0-border: #7c3aed;
+  --arg1: #34d399;   --arg1-bg: #022c22;   --arg1-border: #059669;
+  --arg2: #fb923c;   --arg2-bg: #1c0f04;   --arg2-border: #c2410c;
+  --vrb:  #f1f5f9;   --vrb-bg:  #1e2128;   --vrb-border:  #64748b;
+  --tmp:  #6ee7b7;   --tmp-bg:  #022c1c;   --tmp-border:  #047857;
+  --mnr:  #fbbf24;   --mnr-bg:  #1c1200;   --mnr-border:  #b45309;
+  --loc:  #60a5fa;   --loc-bg:  #0c1a2e;   --loc-border:  #1d4ed8;
+  --neg:  #f87171;   --neg-bg:  #1c0808;   --neg-border:  #b91c1c;
+  --adv:  #a3e635;   --adv-bg:  #0d1a00;   --adv-border:  #4d7c0f;
+  --mod:  #f0abfc;   --mod-bg:  #1a0520;   --mod-border:  #a21caf;
+
+  --accent: #818cf8;
+  --accent2: #6366f1;
+  --gold: #fbbf24;
+
+  --radius: 8px;
+  --font-body: 'DM Sans', sans-serif;
+  --font-display: 'Fraunces', serif;
+  --font-mono: 'DM Mono', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.65;
+  min-height: 100vh;
+}
+
+/* ─── LAYOUT ─── */
+.shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+
+/* ─── HEADER ─── */
+header {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 36px;
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+}
+.header-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+header h1 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+}
+header h1 em {
+  font-style: italic;
+  color: var(--accent);
+}
+.header-badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 12px;
+}
+
+/* ─── SIDEBAR ─── */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 24px 0;
+  overflow-y: auto;
+  position: sticky;
+  top: 0;
+  height: calc(100vh - 69px);
+}
+.sidebar-section {
+  padding: 0 16px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.sidebar-section + .sidebar-section { margin-top: 8px; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: all .15s;
+  user-select: none;
+}
+.nav-item:hover { background: var(--surface2); }
+.nav-item.active {
+  background: var(--surface2);
+  border-left-color: var(--accent);
+}
+.nav-item.active .nav-num { color: var(--accent); }
+.nav-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+  min-width: 18px;
+}
+.nav-label {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.nav-item.active .nav-label { color: var(--text); }
+.nav-phase-divider {
+  margin: 12px 16px 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+/* ─── MAIN CONTENT ─── */
+main {
+  padding: 36px 44px;
+  overflow-y: auto;
+  height: calc(100vh - 69px);
+}
+
+/* Panel show/hide */
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* Phase + rule header */
+.panel-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .1em;
+  margin-bottom: 8px;
+}
+.panel-eyebrow span { color: var(--accent); }
+
+.panel-title {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+.panel-title em { font-style: italic; color: var(--accent); }
+
+.panel-desc {
+  font-size: 14.5px;
+  color: var(--muted);
+  line-height: 1.75;
+  max-width: 680px;
+  margin-bottom: 28px;
+  border-left: 2px solid var(--border2);
+  padding-left: 16px;
+}
+
+/* Sections inside panel */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* Code block */
+.code-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+.code-top {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.code-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--border2);
+}
+.code-top-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.code-body {
+  padding: 18px 20px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: #c9d1d9;
+  overflow-x: auto;
+  white-space: pre;
+}
+.kw  { color: #ff7b72; }
+.fn  { color: #d2a8ff; }
+.st  { color: #a5d6ff; }
+.cm  { color: #6a737d; font-style: italic; }
+.nm  { color: #79c0ff; }
+.op  { color: #e3b341; }
+
+/* Examples section */
+.example-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.example-top {
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.example-sent {
+  font-size: 14.5px;
+  color: var(--text);
+  line-height: 1.6;
+  font-style: italic;
+}
+.example-body { padding: 14px 18px; }
+.roles-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.role-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 220px;
+}
+.chip-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.chip-note {
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 0 2px;
+  line-height: 1.35;
+}
+
+.chip-arg0 { color: var(--arg0); background: var(--arg0-bg); border-color: var(--arg0-border); }
+.chip-arg1 { color: var(--arg1); background: var(--arg1-bg); border-color: var(--arg1-border); }
+.chip-arg2 { color: var(--arg2); background: var(--arg2-bg); border-color: var(--arg2-border); }
+.chip-vrb  { color: var(--vrb);  background: var(--vrb-bg);  border-color: var(--vrb-border); }
+.chip-tmp  { color: var(--tmp);  background: var(--tmp-bg);  border-color: var(--tmp-border); }
+.chip-mnr  { color: var(--mnr);  background: var(--mnr-bg);  border-color: var(--mnr-border); }
+.chip-loc  { color: var(--loc);  background: var(--loc-bg);  border-color: var(--loc-border); }
+.chip-neg  { color: var(--neg);  background: var(--neg-bg);  border-color: var(--neg-border); }
+.chip-adv  { color: var(--adv);  background: var(--adv-bg);  border-color: var(--adv-border); }
+.chip-mod  { color: var(--mod);  background: var(--mod-bg);  border-color: var(--mod-border); }
+.chip-skip { color: var(--faint); background: var(--surface2); border-color: var(--border); }
+
+/* Sentence annotator */
+.annotator-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 28px;
+}
+.annotator-sentence {
+  font-size: 16px;
+  line-height: 2.4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.word-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: default;
+  font-size: 14.5px;
+  border: 1px solid transparent;
+  transition: transform .1s;
+  position: relative;
+}
+.word-chip:hover .tooltip { display: block; }
+.tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e2128;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  z-index: 10;
+  pointer-events: none;
+}
+.tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border2);
+}
+
+/* Legend */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.legend-dot {
+  width: 10px; height: 10px; border-radius: 2px;
+}
+
+/* Flow diagram */
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 28px;
+  max-width: 640px;
+}
+.flow-step {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+.flow-line-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 36px;
+  flex-shrink: 0;
+}
+.flow-circle {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.flow-connector {
+  width: 1px;
+  background: var(--border);
+  flex: 1;
+  min-height: 16px;
+}
+.flow-content {
+  flex: 1;
+  padding: 0 0 20px 14px;
+}
+.flow-content-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.flow-content-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* Nav buttons */
+.panel-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.btn:hover { color: var(--text); border-color: var(--accent); }
+.btn:disabled { opacity: .3; pointer-events: none; }
+.btn-primary {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.btn-primary:hover { background: #6366f1; border-color: #6366f1; color: #fff; }
+
+.progress-track {
+  flex: 1;
+  height: 2px;
+  background: var(--border);
+  border-radius: 2px;
+  margin: 0 20px;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width .3s;
+}
+
+/* Overview grid */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.ov-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.ov-card:hover { border-color: var(--accent); background: var(--surface2); }
+.ov-phase {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.ov-num {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.ov-title { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+.ov-desc  { font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+/* Pipeline overview top panel */
+.pipeline-phases {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+.phase-box {
+  background: var(--surface);
+  padding: 16px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.phase-box:hover { background: var(--surface2); }
+.phase-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.phase-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.phase-rules {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ─── INLINE SENTENCE DEMO ─── */
+.demo-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 28px;
+}
+.demo-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.demo-tab {
+  padding: 9px 16px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all .15s;
+}
+.demo-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.demo-tab-content { display: none; padding: 18px; }
+.demo-tab-content.active { display: block; }
+.anno-sent {
+  font-size: 15px;
+  line-height: 2.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+.anno-word {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.anno-text {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.anno-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.plain { color: var(--muted); }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+<!-- ═══ HEADER ═══ -->
+<header>
+  <div>
+    <div class="header-eyebrow">en_core_web_trf · spaCy SRL</div>
+    <h1>Semantic Role <em>Labelling</em> — Rule Guide</h1>
+  </div>
+  <div class="header-badge">12 rules · 4 phases</div>
+</header>
+
+<!-- ═══ SIDEBAR ═══ -->
+<nav class="sidebar">
+  <div class="sidebar-section">Navigate</div>
+  <div class="nav-item active" onclick="showPanel('overview')">
+    <span class="nav-num">★</span>
+    <span class="nav-label">Pipeline Overview</span>
+  </div>
+  <div class="nav-phase-divider">Phase 1 — Predicates</div>
+  <div class="nav-item" onclick="showPanel('p1')">
+    <span class="nav-num">01</span>
+    <span class="nav-label">Find predicates</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p2')">
+    <span class="nav-num">02</span>
+    <span class="nav-label">Skip light verbs</span>
+  </div>
+  <div class="nav-phase-divider">Phase 2 — Arguments</div>
+  <div class="nav-item" onclick="showPanel('p3')">
+    <span class="nav-num">03</span>
+    <span class="nav-label">ARG0 — Subject</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p4')">
+    <span class="nav-num">04</span>
+    <span class="nav-label">ARG1 / ARG2 — Objects</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p5')">
+    <span class="nav-num">05</span>
+    <span class="nav-label">Oblique args</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p6')">
+    <span class="nav-num">06</span>
+    <span class="nav-label">Negation</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p7')">
+    <span class="nav-num">07</span>
+    <span class="nav-label">Adverbials</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p8')">
+    <span class="nav-num">08</span>
+    <span class="nav-label">Adverbial clauses</span>
+  </div>
+  <div class="nav-phase-divider">Phase 3 — Nested</div>
+  <div class="nav-item" onclick="showPanel('p9')">
+    <span class="nav-num">09</span>
+    <span class="nav-label">Coordinated verbs</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p10')">
+    <span class="nav-num">10</span>
+    <span class="nav-label">Nested clauses</span>
+  </div>
+  <div class="nav-phase-divider">Phase 4 — Quality</div>
+  <div class="nav-item" onclick="showPanel('p11')">
+    <span class="nav-num">11</span>
+    <span class="nav-label">Frame quality gate</span>
+  </div>
+  <div class="nav-item" onclick="showPanel('p12')">
+    <span class="nav-num">12</span>
+    <span class="nav-label">Deduplication</span>
+  </div>
+</nav>
+
+<!-- ═══ MAIN ═══ -->
+<main id="mainContent">
+
+<!-- ══ OVERVIEW PANEL ══ -->
+<div class="panel active" id="panel-overview">
+  <div class="panel-eyebrow">Start here</div>
+  <div class="panel-title">SRL <em>Pipeline</em> at a Glance</div>
+  <div class="panel-desc">
+    Semantic Role Labelling (SRL) maps each word in a sentence to its role in an event —
+    <em>who</em> did what, <em>to whom</em>, <em>how</em>, and <em>when</em>.
+    Your code builds this entirely from spaCy's RoBERTa-based parser output across 4 phases and 12 rules.
+  </div>
+
+  <div class="section-label">Four phases</div>
+  <div class="pipeline-phases">
+    <div class="phase-box" onclick="showPanel('p1')">
+      <div class="phase-num">Phase 1</div>
+      <div class="phase-title">Predicate Selection</div>
+      <div class="phase-rules">Rules 1–2 · Pick the action words</div>
+    </div>
+    <div class="phase-box" onclick="showPanel('p3')">
+      <div class="phase-num">Phase 2</div>
+      <div class="phase-title">Argument Assignment</div>
+      <div class="phase-rules">Rules 3–8 · Who, what, how, where</div>
+    </div>
+    <div class="phase-box" onclick="showPanel('p9')">
+      <div class="phase-num">Phase 3</div>
+      <div class="phase-title">Nested Frames</div>
+      <div class="phase-rules">Rules 9–10 · Coord. + clausal verbs</div>
+    </div>
+    <div class="phase-box" onclick="showPanel('p11')">
+      <div class="phase-num">Phase 4</div>
+      <div class="phase-title">Quality Control</div>
+      <div class="phase-rules">Rules 11–12 · Filter + deduplicate</div>
+    </div>
+  </div>
+
+  <div class="section-label">Tag colour legend</div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--arg0)"></div> ARG0 — Agent / doer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--arg1)"></div> ARG1 — Patient / object</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--arg2)"></div> ARG2 — Recipient</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--vrb)"></div> V — Predicate verb</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--tmp)"></div> ARGM-TMP — Time</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--mnr)"></div> ARGM-MNR — Manner</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--loc)"></div> ARGM-LOC — Location</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--neg)"></div> ARGM-NEG — Negation</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--adv)"></div> ARGM-ADV — Adverbial</div>
+  </div>
+
+  <div class="section-label">Live example — all roles tagged</div>
+  <div class="demo-wrap">
+    <div class="demo-tabs">
+      <div class="demo-tab active" onclick="switchTab(this,'tab-active')">Active voice</div>
+      <div class="demo-tab" onclick="switchTab(this,'tab-passive')">Passive voice</div>
+      <div class="demo-tab" onclick="switchTab(this,'tab-coord')">Coordinated verbs</div>
+    </div>
+    <div class="demo-tab-content active" id="tab-active">
+      <div class="anno-sent">
+        <div class="anno-word"><span class="anno-text chip-arg0">Attackers</span><span class="anno-tag" style="color:var(--arg0)">ARG0</span></div>
+        <div class="anno-word"><span class="anno-text chip-vrb">exploited</span><span class="anno-tag" style="color:var(--vrb)">V</span></div>
+        <div class="anno-word"><span class="anno-text chip-arg1">the vulnerability</span><span class="anno-tag" style="color:var(--arg1)">ARG1</span></div>
+        <div class="anno-word"><span class="anno-text chip-mnr">via a crafted request</span><span class="anno-tag" style="color:var(--mnr)">MNR</span></div>
+        <div class="anno-word"><span class="anno-text chip-tmp">immediately</span><span class="anno-tag" style="color:var(--tmp)">TMP</span></div>
+        <div class="anno-word"><span class="anno-text plain">.</span><span class="anno-tag">&nbsp;</span></div>
+      </div>
+    </div>
+    <div class="demo-tab-content" id="tab-passive">
+      <div class="anno-sent">
+        <div class="anno-word"><span class="anno-text chip-arg1">The server</span><span class="anno-tag" style="color:var(--arg1)">ARG1</span></div>
+        <div class="anno-word"><span class="anno-text plain">was</span><span class="anno-tag">&nbsp;</span></div>
+        <div class="anno-word"><span class="anno-text chip-vrb">compromised</span><span class="anno-tag" style="color:var(--vrb)">V</span></div>
+        <div class="anno-word"><span class="anno-text chip-arg0">by attackers</span><span class="anno-tag" style="color:var(--arg0)">ARG0</span></div>
+        <div class="anno-word"><span class="anno-text chip-loc">in the DMZ</span><span class="anno-tag" style="color:var(--loc)">LOC</span></div>
+        <div class="anno-word"><span class="anno-text plain">.</span><span class="anno-tag">&nbsp;</span></div>
+      </div>
+    </div>
+    <div class="demo-tab-content" id="tab-coord">
+      <div class="anno-sent">
+        <div class="anno-word"><span class="anno-text chip-arg0">Attackers</span><span class="anno-tag" style="color:var(--arg0)">ARG0</span></div>
+        <div class="anno-word"><span class="anno-text chip-vrb">downloaded</span><span class="anno-tag" style="color:var(--vrb)">V₁</span></div>
+        <div class="anno-word"><span class="anno-text plain">and</span><span class="anno-tag">&nbsp;</span></div>
+        <div class="anno-word"><span class="anno-text chip-vrb">executed</span><span class="anno-tag" style="color:var(--vrb)">V₂</span></div>
+        <div class="anno-word"><span class="anno-text chip-arg1">the payload</span><span class="anno-tag" style="color:var(--arg1)">ARG1</span></div>
+        <div class="anno-word"><span class="anno-text chip-loc">on the host</span><span class="anno-tag" style="color:var(--loc)">LOC</span></div>
+        <div class="anno-word"><span class="anno-text plain">.</span><span class="anno-tag">&nbsp;</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:12px;">
+        ↳ Two frames generated: one for <code style="font-family:var(--font-mono);color:var(--accent)">downloaded</code>, one for <code style="font-family:var(--font-mono);color:var(--accent)">executed</code>. Both inherit <em>Attackers</em> as ARG0.
+      </p>
+    </div>
+  </div>
+
+  <div class="section-label">All 12 rules — click to open</div>
+  <div class="overview-grid">
+    <div class="ov-card" onclick="showPanel('p1')">
+      <div class="ov-phase">Phase 1</div>
+      <div class="ov-num">01</div>
+      <div class="ov-title">Find predicates</div>
+      <div class="ov-desc">Only VERB/AUX at ROOT or conj pass the predicate gate.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p2')">
+      <div class="ov-phase">Phase 1</div>
+      <div class="ov-num">02</div>
+      <div class="ov-title">Skip light verbs</div>
+      <div class="ov-desc">be, is, are, was, include — semantically empty, dropped.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p3')">
+      <div class="ov-phase">Phase 2</div>
+      <div class="ov-num">03</div>
+      <div class="ov-title">ARG0 — Subject</div>
+      <div class="ov-desc">nsubj → ARG0 active; agent/obl:agent → ARG0 passive.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p4')">
+      <div class="ov-phase">Phase 2</div>
+      <div class="ov-num">04</div>
+      <div class="ov-title">ARG1 / ARG2 — Objects</div>
+      <div class="ov-desc">obj/dobj → ARG1 direct; iobj → ARG2 indirect.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p5')">
+      <div class="ov-phase">Phase 2</div>
+      <div class="ov-num">05</div>
+      <div class="ov-title">Oblique args</div>
+      <div class="ov-desc">PP/obl classified: NER → TMP; via/by → MNR; in/at → LOC.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p6')">
+      <div class="ov-phase">Phase 2</div>
+      <div class="ov-num">06</div>
+      <div class="ov-title">Negation</div>
+      <div class="ov-desc">dep=neg → single token tagged ARGM-NEG.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p7')">
+      <div class="ov-phase">Phase 2</div>
+      <div class="ov-num">07</div>
+      <div class="ov-title">Adverbials</div>
+      <div class="ov-desc">advmod: temporal word → TMP; else → MNR.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p8')">
+      <div class="ov-phase">Phase 2</div>
+      <div class="ov-num">08</div>
+      <div class="ov-title">Adverbial clauses</div>
+      <div class="ov-desc">advcl → ARGM-ADV; purpose infinitives queued as new frames.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p9')">
+      <div class="ov-phase">Phase 3</div>
+      <div class="ov-num">09</div>
+      <div class="ov-title">Coordinated verbs</div>
+      <div class="ov-desc">conj VERB → own frame inheriting parent subject.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p10')">
+      <div class="ov-phase">Phase 3</div>
+      <div class="ov-num">10</div>
+      <div class="ov-title">Nested clauses</div>
+      <div class="ov-desc">xcomp/ccomp/acl each spawn a child frame with controlled subject.</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p11')">
+      <div class="ov-phase">Phase 4</div>
+      <div class="ov-num">11</div>
+      <div class="ov-title">Frame quality gate</div>
+      <div class="ov-desc">Must have ≥1 meaningful arg (NER/PROPN/NOUN/acronym).</div>
+    </div>
+    <div class="ov-card" onclick="showPanel('p12')">
+      <div class="ov-phase">Phase 4</div>
+      <div class="ov-num">12</div>
+      <div class="ov-title">Deduplication</div>
+      <div class="ov-desc">Frames whose arg words ⊆ richer frame's args are dropped.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ RULE PANELS ══ -->
+
+<!-- Rule 1 -->
+<div class="panel" id="panel-p1">
+  <div class="panel-eyebrow">Phase 1 · Rule <span>01</span></div>
+  <div class="panel-title">Find <em>Predicates</em></div>
+  <div class="panel-desc">
+    The pipeline starts by scanning every token. A token must satisfy three conditions
+    to become a predicate (the action around which a frame is built):
+    it must be a VERB or AUX, it must be a main verb (ROOT or coordinated conj),
+    and it must not be a bare auxiliary already serving another verb.
+  </div>
+
+  <div class="section-label">Decision flow</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">1a</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Is the token POS = VERB or AUX?</div>
+        <div class="flow-content-desc">If neither → skip immediately. Only action-class tokens proceed.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">1b</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Is it a bare auxiliary of another VERB?</div>
+        <div class="flow-content-desc">If dep ∈ {aux, auxpass, aux:pass} and its head is a VERB → skip. The main VERB handles the frame, not its helper.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">1c</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Is its dep label in {ROOT, conj}?</div>
+        <div class="flow-content-desc">Only the sentence root or a coordinated verb qualifies as a main predicate. Everything else (relative clause verbs, etc.) is handled via the nested queue in Rule 10.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">✓</div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Passes → candidate predicate</div>
+        <div class="flow-content-desc">Sent to Rule 2 (light verb filter) before a frame is created.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">extract_srl() · predicate selection loop</div></div>
+    <div class="code-body"><span class="kw">for</span> i, (word, pos) <span class="kw">in</span> <span class="fn">enumerate</span>(<span class="fn">zip</span>(words, pos_tags)):
+
+    <span class="cm"># 1a — skip bare auxiliaries that serve another VERB</span>
+    <span class="kw">if</span> pos == <span class="st">"AUX"</span> <span class="kw">and</span> deprels[i] <span class="kw">in</span> (<span class="st">"aux"</span>, <span class="st">"auxpass"</span>, <span class="st">"aux:pass"</span>):
+        <span class="kw">if</span> <span class="nm">0</span> &lt;= heads[i] &lt; n <span class="kw">and</span> pos_tags[heads[i]] == <span class="st">"VERB"</span>:
+            <span class="kw">continue</span>
+
+    <span class="cm"># 1b — must be VERB or AUX</span>
+    <span class="kw">if</span> pos <span class="kw">not in</span> (<span class="st">"VERB"</span>, <span class="st">"AUX"</span>):
+        <span class="kw">continue</span>
+
+    <span class="cm"># 1c — must be ROOT or coordinated verb</span>
+    <span class="kw">if</span> deprels[i] <span class="kw">not in</span> MAIN_PRED_DEPS:   <span class="cm"># {"ROOT", "conj"}</span>
+        <span class="kw">continue</span>
+
+    <span class="cm"># → candidate predicate — proceed to light-verb filter (Rule 2)</span></div>
+  </div>
+
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The attacker <u>downloaded</u> and <u>executed</u> the payload."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-vrb">downloaded</span><span class="chip-note">dep=ROOT · VERB → predicate ✓</span></div>
+        <div class="role-chip"><span class="chip-label chip-skip">and</span><span class="chip-note">CCONJ — not VERB/AUX → skip</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">executed</span><span class="chip-note">dep=conj · VERB → predicate ✓</span></div>
+        <div class="role-chip"><span class="chip-label chip-skip">was (aux)</span><span class="chip-note">AUX of a VERB head → skipped</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('overview')">← Overview</button>
+    <div class="progress-track"><div class="progress-fill" style="width:8%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p2')">Rule 02 →</button>
+  </div>
+</div>
+
+<!-- Rule 2 -->
+<div class="panel" id="panel-p2">
+  <div class="panel-eyebrow">Phase 1 · Rule <span>02</span></div>
+  <div class="panel-title">Skip <em>Light Verbs</em></div>
+  <div class="panel-desc">
+    Even after passing Rule 1, some verbs are semantically empty — they act as grammatical glue
+    rather than real actions. The lemma of each candidate predicate is checked against a fixed blocklist.
+    If it matches, the predicate is silently dropped and no frame is created.
+  </div>
+  <div class="section-label">The blocklist</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">constant</div></div>
+    <div class="code-body">LIGHT_VERBS = {
+    <span class="st">"be"</span>, <span class="st">"is"</span>, <span class="st">"are"</span>, <span class="st">"was"</span>, <span class="st">"were"</span>,
+    <span class="st">"am"</span>, <span class="st">"been"</span>, <span class="st">"being"</span>,
+    <span class="st">"note"</span>, <span class="st">"include"</span>
+}
+
+lemma = doc[i].lemma_.<span class="fn">lower</span>()
+<span class="kw">if</span> lemma <span class="kw">in</span> LIGHT_VERBS:
+    <span class="kw">continue</span>   <span class="cm"># drop — no frame created</span></div>
+  </div>
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The exploit <u>is</u> a buffer overflow that <u>allows</u> code execution."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-skip">is</span><span class="chip-note">lemma='be' → in LIGHT_VERBS → dropped</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">allows</span><span class="chip-note">lemma='allow' → not in blocklist → frame created ✓</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p1')">← Rule 01</button>
+    <div class="progress-track"><div class="progress-fill" style="width:17%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p3')">Rule 03 →</button>
+  </div>
+</div>
+
+<!-- Rule 3 -->
+<div class="panel" id="panel-p3">
+  <div class="panel-eyebrow">Phase 2 · Rule <span>03</span></div>
+  <div class="panel-title">Assign <em>ARG0</em> — the Subject</div>
+  <div class="panel-desc">
+    ARG0 answers "who is doing the action?" For active sentences the grammatical subject (nsubj) becomes ARG0.
+    For passive sentences the grammar flips: the grammatical subject becomes ARG1 (the patient),
+    and the by-phrase (the logical agent) becomes ARG0.
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">build_frame_tags() · subject assignment</div></div>
+    <div class="code-body"><span class="kw">for</span> ci <span class="kw">in</span> verb_children:
+    dep = deprels[ci]
+
+    <span class="cm"># Active subject → ARG0</span>
+    <span class="kw">if</span> dep <span class="kw">in</span> (<span class="st">"nsubj"</span>, <span class="st">"csubj"</span>):
+        <span class="fn">assign</span>(core_subtree(ci), <span class="st">"ARG0"</span>)
+
+    <span class="cm"># Passive by-phrase → logical agent → ARG0</span>
+    <span class="kw">elif</span> dep <span class="kw">in</span> (<span class="st">"agent"</span>, <span class="st">"obl:agent"</span>):
+        <span class="fn">assign</span>(full_subtree(ci), <span class="st">"ARG0"</span>)
+
+    <span class="cm"># Passive grammatical subject → patient → ARG1 (see Rule 4)</span>
+    <span class="kw">elif</span> dep <span class="kw">in</span> (<span class="st">"nsubj:pass"</span>, <span class="st">"nsubjpass"</span>):
+        <span class="fn">assign</span>(core_subtree(ci), <span class="st">"ARG1"</span>)</div>
+  </div>
+  <div class="section-label">Active vs Passive — the flip</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Active: "Attackers exploited the vulnerability."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">Attackers</span><span class="chip-note">nsubj → ARG0 (doer)</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">exploited</span><span class="chip-note">ROOT predicate</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">the vulnerability</span><span class="chip-note">obj → ARG1 (patient)</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Passive: "The server was compromised by attackers."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg1">The server</span><span class="chip-note">nsubj:pass → ARG1 (patient now!)</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">compromised</span><span class="chip-note">ROOT predicate</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg0">by attackers</span><span class="chip-note">agent → ARG0 (real doer)</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p2')">← Rule 02</button>
+    <div class="progress-track"><div class="progress-fill" style="width:25%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p4')">Rule 04 →</button>
+  </div>
+</div>
+
+<!-- Rule 4 -->
+<div class="panel" id="panel-p4">
+  <div class="panel-eyebrow">Phase 2 · Rule <span>04</span></div>
+  <div class="panel-title">Assign <em>ARG1 / ARG2</em> — Objects</div>
+  <div class="panel-desc">
+    ARG1 is the direct object — what the action is done <em>to</em>.
+    ARG2 is the indirect object — the recipient or beneficiary.
+    Only the core subtree is used (relative clauses attached to the object are excluded).
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">build_frame_tags() · object assignment</div></div>
+    <div class="code-body"><span class="kw">elif</span> dep <span class="kw">in</span> (<span class="st">"obj"</span>, <span class="st">"dobj"</span>):
+    <span class="fn">assign</span>(core_subtree(ci), <span class="st">"ARG1"</span>)   <span class="cm"># direct object</span>
+
+<span class="kw">elif</span> dep == <span class="st">"iobj"</span>:
+    <span class="fn">assign</span>(core_subtree(ci), <span class="st">"ARG2"</span>)  <span class="cm"># indirect object / recipient</span></div>
+  </div>
+  <div class="section-label">Example with both objects</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The malware sends stolen credentials to the C2 server."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">The malware</span><span class="chip-note">nsubj → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">sends</span><span class="chip-note">ROOT predicate</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">stolen credentials</span><span class="chip-note">obj → ARG1 (what is sent)</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg2">to the C2 server</span><span class="chip-note">iobj/obl → ARG2 (where / to whom)</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p3')">← Rule 03</button>
+    <div class="progress-track"><div class="progress-fill" style="width:33%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p5')">Rule 05 →</button>
+  </div>
+</div>
+
+<!-- Rule 5 -->
+<div class="panel" id="panel-p5">
+  <div class="panel-eyebrow">Phase 2 · Rule <span>05</span></div>
+  <div class="panel-title">Classify <em>Oblique Args</em></div>
+  <div class="panel-desc">
+    Prepositional phrases and oblique nominals (dep = obl, nmod, prep) are not simply labelled ARG3.
+    They carry rich semantic distinctions. The <code style="font-family:var(--font-mono);font-size:13px;color:var(--accent)">classify_obl()</code> function checks four criteria in priority order to assign the right modifier tag.
+  </div>
+  <div class="section-label">Priority waterfall</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle" style="color:var(--tmp)">1</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">NER type = DATE / TIME / DURATION / SET → <span style="color:var(--tmp)">ARGM-TMP</span></div>
+        <div class="flow-content-desc">spaCy's NER overrides everything. "After 2019", "within 24 hours" → TMP.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle" style="color:var(--mnr)">2</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Preposition ∈ MANNER_PREPS → <span style="color:var(--mnr)">ARGM-MNR</span></div>
+        <div class="flow-content-desc">via, by, through, using, with, without → manner of action.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle" style="color:var(--loc)">3</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Preposition ∈ SPATIAL_PREPS → <span style="color:var(--loc)">ARGM-LOC</span></div>
+        <div class="flow-content-desc">in, on, at, within, inside, into, onto, upon → spatial location.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle" style="color:var(--tmp)">4</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Word ∈ TEMPORAL_WORDS → <span style="color:var(--tmp)">ARGM-TMP</span></div>
+        <div class="flow-content-desc">after, before, during, while, when — temporal words missed by NER.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle" style="color:var(--loc)">✓</div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Fallback → <span style="color:var(--loc)">ARGM-LOC</span></div>
+        <div class="flow-content-desc">No other match → default to location. Most unclassified obliques are locative.</div>
+      </div>
+    </div>
+  </div>
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The exploit runs via a crafted HTTP request in the target system."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">The exploit</span><span class="chip-note">nsubj → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">runs</span><span class="chip-note">ROOT</span></div>
+        <div class="role-chip"><span class="chip-label chip-mnr">via a crafted HTTP request</span><span class="chip-note">'via' ∈ MANNER_PREPS → MNR</span></div>
+        <div class="role-chip"><span class="chip-label chip-loc">in the target system</span><span class="chip-note">'in' ∈ SPATIAL_PREPS → LOC</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p4')">← Rule 04</button>
+    <div class="progress-track"><div class="progress-fill" style="width:42%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p6')">Rule 06 →</button>
+  </div>
+</div>
+
+<!-- Rule 6 -->
+<div class="panel" id="panel-p6">
+  <div class="panel-eyebrow">Phase 2 · Rule <span>06</span></div>
+  <div class="panel-title">Tag <em>Negation</em></div>
+  <div class="panel-desc">
+    Negation is the simplest rule. If a dependency child of the predicate carries dep = <code style="font-family:var(--font-mono);color:var(--accent)">"neg"</code>
+    (words like "not", "never", "no"), that single token is tagged ARGM-NEG.
+    No subtree expansion — it is always exactly one token.
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">build_frame_tags()</div></div>
+    <div class="code-body"><span class="kw">elif</span> dep == <span class="st">"neg"</span>:
+    tags[ci] = <span class="st">"B-ARGM-NEG"</span>   <span class="cm"># single token only, no subtree</span></div>
+  </div>
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The firewall does not allow inbound connections."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">The firewall</span><span class="chip-note">nsubj → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-skip">does</span><span class="chip-note">AUX of 'allow' → skipped</span></div>
+        <div class="role-chip"><span class="chip-label chip-neg">not</span><span class="chip-note">dep=neg → ARGM-NEG</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">allow</span><span class="chip-note">ROOT predicate</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">inbound connections</span><span class="chip-note">obj → ARG1</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p5')">← Rule 05</button>
+    <div class="progress-track"><div class="progress-fill" style="width:50%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p7')">Rule 07 →</button>
+  </div>
+</div>
+
+<!-- Rule 7 -->
+<div class="panel" id="panel-p7">
+  <div class="panel-eyebrow">Phase 2 · Rule <span>07</span></div>
+  <div class="panel-title">Tag <em>Adverbials</em></div>
+  <div class="panel-desc">
+    Adverb modifiers (dep = advmod, npadvmod) describe <em>how</em> or <em>when</em> something happens.
+    The temporal check — same one used in Rule 5 — decides between TMP and MNR.
+    The full subtree of the adverbial is always included.
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">build_frame_tags() + is_temporal()</div></div>
+    <div class="code-body"><span class="kw">elif</span> dep <span class="kw">in</span> (<span class="st">"advmod"</span>, <span class="st">"npadvmod"</span>):
+    st = <span class="fn">full_subtree</span>(ci)
+    <span class="fn">assign</span>(st,
+        <span class="st">"ARGM-TMP"</span> <span class="kw">if</span> <span class="fn">is_temporal</span>(st) <span class="kw">else</span> <span class="st">"ARGM-MNR"</span>
+    )
+
+<span class="kw">def</span> <span class="fn">is_temporal</span>(indices):
+    <span class="cm"># NER: DATE / TIME / DURATION / SET</span>
+    <span class="kw">if</span> <span class="fn">any</span>(ner_types[t] <span class="kw">in</span> TEMPORAL_ENT_TYPES <span class="kw">for</span> t <span class="kw">in</span> indices):
+        <span class="kw">return True</span>
+    <span class="cm"># explicit temporal words as fallback</span>
+    <span class="kw">return</span> <span class="fn">any</span>(words[t].<span class="fn">lower</span>() <span class="kw">in</span> TEMPORAL_WORDS <span class="kw">for</span> t <span class="kw">in</span> indices)</div>
+  </div>
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The malware immediately contacted the C2 server."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">The malware</span><span class="chip-note">nsubj → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-tmp">immediately</span><span class="chip-note">advmod + 'immediately' ∈ TEMPORAL_WORDS → TMP</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">contacted</span><span class="chip-note">ROOT predicate</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">the C2 server</span><span class="chip-note">obj → ARG1</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p6')">← Rule 06</button>
+    <div class="progress-track"><div class="progress-fill" style="width:58%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p8')">Rule 08 →</button>
+  </div>
+</div>
+
+<!-- Rule 8 -->
+<div class="panel" id="panel-p8">
+  <div class="panel-eyebrow">Phase 2 · Rule <span>08</span></div>
+  <div class="panel-title">Tag <em>Adverbial Clauses</em></div>
+  <div class="panel-desc">
+    Adverbial clauses (dep = advcl) express subordinate circumstances. Most become ARGM-ADV.
+    Exception: a purpose infinitive ("to execute arbitrary commands") is detected by the presence
+    of a "to" marker and is <em>not</em> tagged here — instead it is pushed onto a nested_queue
+    to become its own separate frame (processed in Rule 10).
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">build_frame_tags()</div></div>
+    <div class="code-body"><span class="kw">elif</span> dep == <span class="st">"advcl"</span>:
+    mark_children = [
+        c <span class="kw">for</span> c <span class="kw">in</span> children[ci]
+        <span class="kw">if</span> deprels[c] <span class="kw">in</span> (<span class="st">"mark"</span>, <span class="st">"aux"</span>)
+    ]
+    is_purpose_inf = (
+        pos_tags[ci] == <span class="st">"VERB"</span>
+        <span class="kw">and</span> <span class="fn">any</span>(words[m].<span class="fn">lower</span>() == <span class="st">"to"</span> <span class="kw">for</span> m <span class="kw">in</span> mark_children)
+    )
+    <span class="kw">if</span> is_purpose_inf:
+        <span class="kw">continue</span>    <span class="cm"># → pushed to nested_queue (Rule 10)</span>
+    <span class="fn">assign</span>(<span class="fn">full_subtree</span>(ci), <span class="st">"ARGM-ADV"</span>)</div>
+  </div>
+  <div class="section-label">Two cases</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Regular advcl: "The malware waits until the antivirus scan completes."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-vrb">waits</span><span class="chip-note">ROOT predicate</span></div>
+        <div class="role-chip"><span class="chip-label chip-adv">until the antivirus scan completes</span><span class="chip-note">advcl, no 'to' → ARGM-ADV</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Purpose infinitive: "The malware attempts to execute arbitrary commands."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-vrb">attempts</span><span class="chip-note">ROOT — frame 1</span></div>
+        <div class="role-chip"><span class="chip-label chip-skip">to execute arbitrary commands</span><span class="chip-note">advcl with 'to' marker → pushed to nested queue → own frame</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p7')">← Rule 07</button>
+    <div class="progress-track"><div class="progress-fill" style="width:67%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p9')">Rule 09 →</button>
+  </div>
+</div>
+
+<!-- Rule 9 -->
+<div class="panel" id="panel-p9">
+  <div class="panel-eyebrow">Phase 3 · Rule <span>09</span></div>
+  <div class="panel-title">Coordinated <em>Verbs</em></div>
+  <div class="panel-desc">
+    When two verbs are joined by "and" or "or" (dep = conj, POS = VERB), each gets its
+    own independent frame. The coordinated verb typically has no nsubj child of its own —
+    so the code inherits the subject of the root verb and passes it as <code style="font-family:var(--font-mono);color:var(--accent)">ctrl_subject</code>.
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">extract_srl() · coordinated verb handling</div></div>
+    <div class="code-body"><span class="kw">for</span> ci <span class="kw">in</span> children[i]:
+    <span class="kw">if</span> deprels[ci] == <span class="st">"conj"</span> <span class="kw">and</span> pos_tags[ci] == <span class="st">"VERB"</span>:
+        conj_vid = <span class="fn">f</span><span class="st">"{words[ci]}_{ci}"</span>
+        <span class="kw">if</span> conj_vid <span class="kw">not in</span> seen:
+            seen.<span class="fn">add</span>(conj_vid)
+            frames.<span class="fn">append</span>({
+                <span class="st">"id"</span>: conj_vid,
+                <span class="st">"tags"</span>: <span class="fn">build_frame_tags</span>(
+                    ci, children[ci],
+                    ctrl_subject=subj_indices,  <span class="cm"># ← inherited from root</span>
+                    is_passive=conj_passive
+                )
+            })</div>
+  </div>
+  <div class="section-label">Example — two frames from one sentence</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"Attackers downloaded and executed malware on the host."</div></div>
+    <div class="example-body">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">Frame 1 — downloaded (ROOT)</p>
+      <div class="roles-row" style="margin-bottom:14px;">
+        <div class="role-chip"><span class="chip-label chip-arg0">Attackers</span><span class="chip-note">nsubj → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">downloaded</span><span class="chip-note">ROOT</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">malware</span><span class="chip-note">obj → ARG1</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">Frame 2 — executed (conj)</p>
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">Attackers</span><span class="chip-note">inherited ctrl_subject → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">executed</span><span class="chip-note">conj of downloaded</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">malware</span><span class="chip-note">obj → ARG1</span></div>
+        <div class="role-chip"><span class="chip-label chip-loc">on the host</span><span class="chip-note">obl 'on' → LOC</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p8')">← Rule 08</button>
+    <div class="progress-track"><div class="progress-fill" style="width:75%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p10')">Rule 10 →</button>
+  </div>
+</div>
+
+<!-- Rule 10 -->
+<div class="panel" id="panel-p10">
+  <div class="panel-eyebrow">Phase 3 · Rule <span>10</span></div>
+  <div class="panel-title">Nested <em>Clauses</em></div>
+  <div class="panel-desc">
+    Clausal complements — xcomp, ccomp, acl, and purpose advcl — each spawn their own
+    frame via a <code style="font-family:var(--font-mono);color:var(--accent)">nested_queue</code>.
+    The key question for each: what is the subject of the nested verb? This is determined by the
+    linguistic notion of "control" — who performs the nested action?
+  </div>
+  <div class="section-label">Subject control rules</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">xcomp</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Open clausal complement → object control</div>
+        <div class="flow-content-desc">The parent's object (or subject if no object) is the controller. "allow the server to run" → "the server" is ARG0 of "run".</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">ccomp</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Closed clausal complement → independent subject</div>
+        <div class="flow-content-desc">The embedded clause has its own subject — no inheritance. "reports that the module loaded" → "the module" is its own ARG0.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">advcl</div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Purpose infinitive → subject control</div>
+        <div class="flow-content-desc">The parent's subject is the controller. "the malware attempts to execute" → "the malware" is ARG0 of "execute".</div>
+      </div>
+    </div>
+  </div>
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">"The malware attempts to exploit a flaw to execute arbitrary commands."</div></div>
+    <div class="example-body">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Frame 1 — attempts (ROOT)</p>
+      <div class="roles-row" style="margin-bottom:12px;">
+        <div class="role-chip"><span class="chip-label chip-arg0">The malware</span><span class="chip-note">nsubj → ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">attempts</span><span class="chip-note">ROOT</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Frame 2 — exploit (xcomp)</p>
+      <div class="roles-row" style="margin-bottom:12px;">
+        <div class="role-chip"><span class="chip-label chip-arg0">The malware</span><span class="chip-note">inherited from parent subject</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">exploit</span><span class="chip-note">xcomp</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">a flaw</span><span class="chip-note">obj → ARG1</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Frame 3 — execute (purpose advcl)</p>
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">a flaw</span><span class="chip-note">object of exploit → inherited ARG0</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">execute</span><span class="chip-note">purpose inf.</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">arbitrary commands</span><span class="chip-note">obj → ARG1</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p9')">← Rule 09</button>
+    <div class="progress-track"><div class="progress-fill" style="width:83%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p11')">Rule 11 →</button>
+  </div>
+</div>
+
+<!-- Rule 11 -->
+<div class="panel" id="panel-p11">
+  <div class="panel-eyebrow">Phase 4 · Rule <span>11</span></div>
+  <div class="panel-title">Frame <em>Quality Gate</em></div>
+  <div class="panel-desc">
+    Not all frames produced by Rules 1–10 are useful. A quality gate enforces three conditions
+    before a frame is added to the output. Any frame failing even one condition is discarded.
+  </div>
+  <div class="section-label">Three conditions (all must pass)</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">A</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Has at least one non-verb argument</div>
+        <div class="flow-content-desc">A frame with only a V role is meaningless. There must be at least one ARG0/ARG1/ARGM-* slot.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">B</div><div class="flow-connector"></div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">At least one argument span is "meaningful"</div>
+        <div class="flow-content-desc">Checked by _is_meaningful_span(): any token with NER label, POS=PROPN, all-caps acronym (WMI, RDP, ETW), or non-stop NOUN qualifies.</div>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-line-col"><div class="flow-circle">C</div></div>
+      <div class="flow-content">
+        <div class="flow-content-title">Verb text is non-empty</div>
+        <div class="flow-content-desc">The V slot must contain actual text. Guards against edge cases from the dependency parser.</div>
+      </div>
+    </div>
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">_is_meaningful_span() · _is_high_value_frame()</div></div>
+    <div class="code-body"><span class="kw">def</span> <span class="fn">_is_meaningful_span</span>(text, doc_span_tokens):
+    <span class="kw">for</span> tok <span class="kw">in</span> doc_span_tokens:
+        <span class="kw">if</span> tok.ent_type_:                          <span class="cm"># NER: LSASS, PowerShell</span>
+            <span class="kw">return True</span>
+        <span class="kw">if</span> tok.pos_ == <span class="st">"PROPN"</span>:                   <span class="cm"># proper noun</span>
+            <span class="kw">return True</span>
+        <span class="kw">if</span> tok.text.<span class="fn">isupper</span>() <span class="kw">and</span> <span class="fn">len</span>(tok.text) >= <span class="nm">2</span>: <span class="cm"># WMI, RDP</span>
+            <span class="kw">return True</span>
+        <span class="kw">if</span> tok.pos_ == <span class="st">"NOUN"</span> <span class="kw">and not</span> tok.is_stop:
+            <span class="kw">return True</span>
+    <span class="kw">return False</span></div>
+  </div>
+  <div class="section-label">Pass vs fail</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Fail: "It is used."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-neg">DROPPED</span><span class="chip-note">'it' has no NER, no PROPN, no NOUN → fails condition B</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Pass: "PowerShell executes the encoded command."</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">PowerShell</span><span class="chip-note">PROPN → meaningful ✓ → frame kept</span></div>
+        <div class="role-chip"><span class="chip-label chip-vrb">executes</span><span class="chip-note">V slot non-empty ✓</span></div>
+        <div class="role-chip"><span class="chip-label chip-arg1">the encoded command</span><span class="chip-note">NOUN 'command' → meaningful ✓</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p10')">← Rule 10</button>
+    <div class="progress-track"><div class="progress-fill" style="width:92%"></div></div>
+    <button class="btn btn-primary" onclick="showPanel('p12')">Rule 12 →</button>
+  </div>
+</div>
+
+<!-- Rule 12 -->
+<div class="panel" id="panel-p12">
+  <div class="panel-eyebrow">Phase 4 · Rule <span>12</span></div>
+  <div class="panel-title"><em>Deduplication</em></div>
+  <div class="panel-desc">
+    Multiple frames for the same sentence can be redundant. After quality filtering,
+    any frame whose non-verb argument word set is a strict <em>subset</em> of an already-accepted
+    frame is discarded. The richer frame (more content) always wins.
+  </div>
+  <div class="section-label">Code</div>
+  <div class="code-wrap">
+    <div class="code-top"><div class="code-dot"></div><div class="code-dot"></div><div class="code-dot"></div><div class="code-top-label">_deduplicate_frames()</div></div>
+    <div class="code-body"><span class="kw">def</span> <span class="fn">_deduplicate_frames</span>(structured):
+    kept, seen_arg_sets = {}, []
+
+    <span class="kw">for</span> vid, roles <span class="kw">in</span> structured.<span class="fn">items</span>():
+        non_verb_vals = <span class="fn">frozenset</span>(
+            w.<span class="fn">lower</span>()
+            <span class="kw">for</span> k, v <span class="kw">in</span> roles.<span class="fn">items</span>() <span class="kw">if</span> k != <span class="st">"V"</span>
+            <span class="kw">for</span> w <span class="kw">in</span> v.<span class="fn">split</span>()
+        )
+        <span class="cm"># drop if this frame's content ⊆ any kept frame</span>
+        is_redundant = <span class="fn">any</span>(
+            non_verb_vals &lt;= existing
+            <span class="kw">for</span> existing <span class="kw">in</span> seen_arg_sets
+        )
+        <span class="kw">if not</span> is_redundant:
+            kept[vid] = roles
+            seen_arg_sets.<span class="fn">append</span>(non_verb_vals)
+
+    <span class="kw">return</span> kept</div>
+  </div>
+  <div class="section-label">Example</div>
+  <div class="example-card">
+    <div class="example-top"><div class="example-sent">Two frames from the same sentence:</div></div>
+    <div class="example-body">
+      <div class="roles-row">
+        <div class="role-chip"><span class="chip-label chip-arg0">Frame A: {ARG0:'attacker', ARG1:'system', LOC:'network'}</span><span class="chip-note">kept — richer word set</span></div>
+        <div class="role-chip"><span class="chip-label chip-skip">Frame B: {ARG1:'system'}</span><span class="chip-note">{'system'} ⊆ Frame A's set → DROPPED</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-nav">
+    <button class="btn" onclick="showPanel('p11')">← Rule 11</button>
+    <div class="progress-track"><div class="progress-fill" style="width:100%"></div></div>
+    <button class="btn" onclick="showPanel('overview')" style="color:var(--accent);border-color:var(--accent)">← Back to overview</button>
+  </div>
+</div>
+
+</main><!-- /main -->
+</div><!-- /shell -->
+
+<script>
+const PANEL_ORDER = ['overview','p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12'];
+
+function showPanel(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+  const panel = document.getElementById('panel-' + id);
+  if (panel) panel.classList.add('active');
+
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'" + id + "'")) {
+      n.classList.add('active');
+    }
+  });
+
+  document.querySelector('main').scrollTop = 0;
+}
+
+function switchTab(el, tabId) {
+  const wrap = el.closest('.demo-wrap');
+  wrap.querySelectorAll('.demo-tab').forEach(t => t.classList.remove('active'));
+  wrap.querySelectorAll('.demo-tab-content').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+}
+</script>
+</body>
+</html>
