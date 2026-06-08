@@ -1,4 +1,20 @@
 Code/myenv/
 
-ThreatDataLink/Code/3.Fine-tuningBERT/siamese_samples_with_srl (6).json
-**/siamese_samples_with_srl (6).json
+# Model checkpoints
+*.pth
+*.pt
+*.ckpt
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# LibreOffice lock files
+.~lock*
+
+# OS files
+.DS_Store
