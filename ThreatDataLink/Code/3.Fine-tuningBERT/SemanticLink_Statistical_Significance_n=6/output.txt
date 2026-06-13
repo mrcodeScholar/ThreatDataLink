@@ -1,0 +1,585 @@
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.gridspec import GridSpec
+from scipy.stats import wilcoxon
+
+#  Seeds & style 
+SEEDS        = [42, 123, 7, 21, 99, 555]
+SEED_MARKERS = ['o', 's', '^', 'D', 'v', 'P']
+SEED_PALETTE = ['#4C72B0', '#DD8452', '#55A868', '#C44E52', '#8172B3', '#937860']
+
+plt.rcParams.update({
+    'font.family': 'DejaVu Sans',
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+})
+
+#  Data 
+semanticlink_full = np.array([0.8712, 0.8730, 0.8787, 0.8763, 0.8692, 0.8732])
+
+abl_no_srl    = np.array([0.8419, 0.8624, 0.8866, 0.8717, 0.8619, 0.8601])
+abl_no_cl     = np.array([0.8701, 0.8690, 0.8589, 0.8730, 0.8577, 0.8577])
+abl_no_ca     = np.array([0.8607, 0.8710, 0.8685, 0.8798, 0.8612, 0.8589])
+
+bl_secroberta = np.array([0.8674, 0.8423, 0.8485, 0.8161, 0.8204, 0.8596])
+bl_secbert    = np.array([0.8553, 0.8596, 0.8565, 0.8463, 0.8486, 0.8589])
+bl_sbert      = np.array([0.8787, 0.8716, 0.8665, 0.8299, 0.8501, 0.8755])
+bl_roberta_lg = np.array([0.8595, 0.8589, 0.8612, 0.8663, 0.8624, 0.8773])
+
+sl_secroberta = np.array([0.8613, 0.8638, 0.8642, 0.8595, 0.8499, 0.8583])
+sl_secbert    = np.array([0.8577, 0.8630, 0.8632, 0.8620, 0.8679, 0.8608])
+sl_sbert      = np.array([0.8776, 0.8755, 0.8512, 0.8694, 0.8782, 0.8584])
+
+
+#  Helper 
+def run_wilcoxon(a, b, alt="greater"):
+    stat, p = wilcoxon(a, b, alternative=alt)
+    r   = stat / (len(a) * (len(a) + 1) / 2)
+    sig = "**" if p < 0.05 else ("*" if p < 0.10 else "ns")
+    return stat, p, r, sig
+
+
+
+def plot_slope(ax, full, variant, variant_label, title, ymin_shared, ymax_shared):
+    """Slope graph with a shared Y-axis range passed in from the row."""
+    W, p, r, sig = run_wilcoxon(full, variant)
+
+    for i in range(len(SEEDS)):
+        va, vb = full[i], variant[i]
+        lc = '#2E7D32' if va >= vb else '#C62828'
+        ax.plot([0, 1], [va, vb],
+                color=lc, alpha=0.75, linewidth=1.8, zorder=3,
+                marker=SEED_MARKERS[i], markersize=8,
+                markerfacecolor=SEED_PALETTE[i],
+                markeredgecolor='white', markeredgewidth=0.7)
+
+    # Mean dashed line
+    ax.plot([0, 1], [full.mean(), variant.mean()],
+            color='#212121', linewidth=2.8, linestyle='--',
+            marker='*', markersize=13, zorder=6)
+
+    # Shaded delta band
+    ax.fill_between([0, 1],
+                    [full.mean(), variant.mean()],
+                    [full.mean(), full.mean()],
+                    color='#2E7D32' if full.mean() >= variant.mean() else '#C62828',
+                    alpha=0.07, zorder=1)
+
+    tc = '#1B5E20' if p < 0.05 else ('#F57F17' if p < 0.10 else '#B71C1C')
+    bg = '#F1F8E9' if p < 0.05 else ('#FFFDE7' if p < 0.10 else '#FCE4EC')
+    ax.set_facecolor(bg)
+    ax.set_title(f'{title}\n{sig}  p={p:.4f}  r={r:.3f}',
+                 fontsize=8.5, fontweight='bold', color=tc, pad=4)
+
+    # Mean Δ label — placed inside axes near the bottom
+    delta = full.mean() - variant.mean()
+    ax.text(0.5, ymin_shared + 0.0005,
+            f'Mean Δ = {delta:+.4f}',
+            ha='center', va='bottom', fontsize=7.5,
+            style='italic', color='#444', transform=ax.transData)
+
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(['SemanticLink\n(Full)', variant_label], fontsize=8)
+    ax.set_xlim(-0.4, 1.4)
+    ax.set_ylabel('F1 Score', fontsize=8)
+    ax.set_ylim(ymin_shared, ymax_shared)
+    ax.grid(axis='y', alpha=0.25, linestyle=':', zorder=0)
+    ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+    ax.tick_params(axis='y', labelsize=7.5)
+
+
+# All comparison groups
+row_data = [
+    # Row 0 – Ablations
+    [
+        (abl_no_srl, '–SRL\n(Raw Text)',   'vs w/o SRL Markup'),
+        (abl_no_cl,  '–Contrastive\nLoss', 'vs w/o Contrastive Loss'),
+        (abl_no_ca,  '–Cross\nAttention',  'vs w/o Cross Attention'),
+    ],
+    # Row 1 – Baselines
+    [
+        (bl_secroberta, 'SecRoBERTa\n(no arch)', 'vs SecRoBERTa'),
+        (bl_secbert,    'SecBERT\n(no arch)',     'vs SecBERT'),
+        (bl_sbert,      'SBERT\n(no arch)',       'vs SBERT'),
+        (bl_roberta_lg, 'RoBERTa-Lg\n(no arch)', 'vs RoBERTa-Large'),
+    ],
+    # Row 2 – Encoders
+    [
+        (sl_secroberta, 'SL+\nSecRoBERTa', 'vs SL+SecRoBERTa'),
+        (sl_secbert,    'SL+\nSecBERT',    'vs SL+SecBERT'),
+        (sl_sbert,      'SL+\nSent-BERT',  'vs SL+Sentence-BERT'),
+    ],
+]
+
+def row_ylim(variants):
+    all_vals = np.concatenate([semanticlink_full] + [v[0] for v in variants])
+    lo, hi   = all_vals.min(), all_vals.max()
+    pad      = (hi - lo) * 0.12
+    return lo - pad, hi + pad * 0.3
+
+row_ylims = [row_ylim(rd) for rd in row_data]
+
+# Layout: 3 rows × 4 cols (col 3 spare for Row0 & Row2)
+fig1, axes = plt.subplots(3, 4, figsize=(22, 16))
+fig1.patch.set_facecolor('#F5F5F5')
+fig1.suptitle(
+    'SemanticLink — Per-Seed F1 Paired Slope Plots  (Wilcoxon Signed-Rank Test)\n'
+    '● Each line = one seed  |  Green = Full wins  |  Red = Variant wins  |  '
+    '-- = Mean  |  Background: green=p<.05, yellow=p<.10, red=ns',
+    fontsize=11.5, fontweight='bold', y=0.995, color='#1A237E'
+)
+
+row_meta = [
+    ('TABLE 1\nAblations',  '#1A237E', 3),
+    ('TABLE 2\nBaselines',  '#B71C1C', None),
+    ('TABLE 3\nEncoders',   '#1B5E20', 3),
+]
+
+for ri, (variants, (row_title, row_color, legend_col)) in enumerate(
+        zip(row_data, row_meta)):
+    ymin, ymax = row_ylims[ri]
+
+    for ci, (var, vlabel, title) in enumerate(variants):
+        plot_slope(axes[ri, ci], semanticlink_full, var,
+                   vlabel, title, ymin, ymax)
+
+    used = len(variants)
+    for ci in range(used, 4):
+        axes[ri, ci].axis('off')
+
+    if legend_col is not None:
+        axes[ri, legend_col].set_title(
+            row_title, fontsize=11, fontweight='bold',
+            color=row_color, pad=6)
+
+leg_handles = [
+    plt.Line2D([0], [0], marker=SEED_MARKERS[i], color=SEED_PALETTE[i],
+               linestyle='none', markersize=9, label=f'Seed {SEEDS[i]}')
+    for i in range(len(SEEDS))
+] + [
+    plt.Line2D([0], [0], color='#212121', lw=2.5, linestyle='--',
+               marker='*', markersize=12, label='Mean (both sides)'),
+    mpatches.Patch(color='#2E7D32', alpha=0.7, label='Full > Variant (green)'),
+    mpatches.Patch(color='#C62828', alpha=0.7, label='Full < Variant (red)'),
+    mpatches.Patch(color='#F1F8E9', label='** p < 0.05'),
+    mpatches.Patch(color='#FFFDE7', label='*  p < 0.10'),
+    mpatches.Patch(color='#FCE4EC', label='ns (not sig.)'),
+]
+axes[0, 3].legend(handles=leg_handles, loc='center', fontsize=9,
+                  title='Legend', title_fontsize=10, framealpha=0.95,
+                  edgecolor='#bbb')
+
+axes[1, 3].set_title('TABLE 2\nBaselines', fontsize=11,
+                      fontweight='bold', color='#B71C1C', pad=6)
+axes[2, 3].set_title('TABLE 3\nAlternative Encoders',
+                      fontsize=11, fontweight='bold', color='#1B5E20', pad=6)
+
+plt.tight_layout(rect=[0, 0, 1, 0.975], h_pad=3.5, w_pad=2.0)
+fig1.savefig('/kaggle/working/fig1_paired_plots.png',
+             dpi=150, bbox_inches='tight', facecolor=fig1.get_facecolor())
+print("Saved: fig1_paired_plots.png")
+
+
+
+fig2, ax_bar = plt.subplots(figsize=(16, 8))
+fig2.patch.set_facecolor('#F5F5F5')
+
+#  Bar chart data 
+bar_models = [
+    ('SemanticLink\n(Full)',  semanticlink_full, '#1565C0'),
+    ('w/o SRL',                  abl_no_srl,        '#90CAF9'),
+    ('w/o Contrastive\nLoss',             abl_no_cl,         '#5B9BD5'),
+    ('w/o Cross\nAttention',            abl_no_ca,         '#2196F3'),
+    # gap
+    ('SecRoBERTa',            bl_secroberta,     '#EF6C00'),
+    ('SecBERT',               bl_secbert,        '#FF8F00'),
+    ('SBERT',                 bl_sbert,          '#FFB74D'),
+    ('RoBERTa-Lg',            bl_roberta_lg,     '#FFE0B2'),
+    # gap
+    ('SL+\nSecRoBERTa',       sl_secroberta,     '#2E7D32'),
+    ('SL+\nSecBERT',          sl_secbert,        '#43A047'),
+    ('SL+\nSent-BERT',        sl_sbert,          '#81C784'),
+]
+
+pos, positions = 0, []
+for i in range(len(bar_models)):
+    positions.append(pos)
+    pos += 1.0
+    if i == 3 or i == 7:
+        pos += 0.7   # wider group gap
+
+means_arr  = np.array([m[1].mean() for m in bar_models])
+stds_arr   = np.array([m[1].std()  for m in bar_models])
+colors_arr = [m[2] for m in bar_models]
+labels_arr = [m[0] for m in bar_models]
+
+y_lo  = 0.820
+y_hi  = 0.920
+
+bars = ax_bar.bar(positions, means_arr,
+                  color=colors_arr, alpha=0.88,
+                  edgecolor='white', linewidth=1.2,
+                  yerr=stds_arr, capsize=4,
+                  error_kw=dict(elinewidth=1.4, ecolor='#555', capthick=1.4))
+
+bars[0].set_edgecolor('#0D47A1')
+bars[0].set_linewidth(2.8)
+
+for bar, mean, std in zip(bars, means_arr, stds_arr):
+    ax_bar.text(bar.get_x() + bar.get_width() / 2,
+                mean + std + 0.0012,
+                f'{mean:.4f}',
+                ha='center', va='bottom',
+                fontsize=7.2, rotation=90, color='#222')
+
+ax_bar.set_xticks(positions)
+ax_bar.set_xticklabels(labels_arr, fontsize=8.5, va='top')
+ax_bar.set_ylabel('Mean F1 Score  (± 1 std, n=6 seeds)', fontsize=10.5)
+ax_bar.set_ylim(y_lo, y_hi)
+ax_bar.grid(axis='y', alpha=0.3, linestyle=':', zorder=0)
+ax_bar.axhline(semanticlink_full.mean(), color='#0D47A1', linewidth=1.8,
+               linestyle='--', alpha=0.55,
+               label=f'SemanticLink mean  F1 = {semanticlink_full.mean():.4f}')
+ax_bar.legend(fontsize=9, loc='lower right')
+ax_bar.set_title('(error bars = ±1 std, n=6 seeds)',
+                 fontsize=11.5, fontweight='bold')
+
+for tick_label in ax_bar.get_xticklabels():
+    tick_label.set_color('#222')
+    tick_label.set_fontsize(8.5)
+
+xmin_data, xmax_data = ax_bar.get_xlim()
+def to_ax_x(xd):
+    return (xd - xmin_data) / (xmax_data - xmin_data)
+
+group_spans = [
+    (positions[0] - 0.45, positions[3] + 0.45,
+     'Component Ablations', '#1565C0'),
+
+    (positions[4] - 0.45, positions[7] + 0.45,
+     'Baseline Models', '#E65100'),
+
+    (positions[8] - 0.45, positions[10] + 0.45,
+     'Alternative Encoders', '#2E7D32'),
+]
+
+for x0, x1, label, color in group_spans:
+    mid = (x0 + x1) / 2
+
+    ax_bar.text(to_ax_x(mid), -0.10, label,
+                transform=ax_bar.transAxes,
+                ha='center', va='top',
+                fontsize=8.5, color=color, fontweight='bold',
+                clip_on=False)
+
+#  Significance table 
+# ax_tbl.axis('off')
+
+# all_comparisons = [
+#     ('vs –SRL',          abl_no_srl,      '#BBDEFB'),
+#     ('vs –ContLoss',     abl_no_cl,       '#BBDEFB'),
+#     ('vs –CrossAttn',    abl_no_ca,       '#BBDEFB'),
+#     ('vs SecRoBERTa',    bl_secroberta,   '#FFE0B2'),
+#     ('vs SecBERT',       bl_secbert,      '#FFE0B2'),
+#     ('vs SBERT',         bl_sbert,        '#FFE0B2'),
+#     ('vs RoBERTa-Lg',    bl_roberta_lg,   '#FFE0B2'),
+#     ('vs SL+SecROB.',    sl_secroberta,   '#C8E6C9'),
+#     ('vs SL+SecBERT',    sl_secbert,      '#C8E6C9'),
+#     ('vs SL+Sent-BERT',  sl_sbert,        '#C8E6C9'),
+# ]
+
+# cell_text, cell_clr, row_lbl, row_clr = [], [], [], []
+# for name, var, rc in all_comparisons:
+#     W, p, r, sig = run_wilcoxon(semanticlink_full, var)
+#     delta = semanticlink_full.mean() - var.mean()
+#     sc = '#C8E6C9' if p < 0.05 else ('#FFF9C4' if p < 0.10 else '#FFCDD2')
+#     cell_text.append([f'{delta:>+.4f}', f'{W:.0f}/21', f'{p:.4f}', sig, f'{r:.3f}'])
+#     cell_clr.append([sc] * 5)
+#     row_lbl.append(name)
+#     row_clr.append(rc)
+
+# # FIX: insert separator rows — defined positions, single loop (no bare insert_at)
+# # index 3 → after the 3 ablation rows; index 8 → after the 4 baseline rows (+1 sep already in)
+# for insert_at in [3, 8]:
+#     cell_text.insert(insert_at, ['', '', '', '', ''])
+#     cell_clr.insert(insert_at,  ['#E8E8E8'] * 5)
+#     row_lbl.insert(insert_at,   '')
+#     row_clr.insert(insert_at,   '#D0D0D0')
+
+# tbl = ax_tbl.table(
+#     cellText   = cell_text,
+#     rowLabels  = row_lbl,
+#     rowColours = row_clr,
+#     colLabels  = ['  ΔF1  ', '  W  ', ' p-val ', ' Sig ', '  r  '],
+#     cellColours= cell_clr,
+#     loc        = 'center',
+#     cellLoc    = 'center',
+# )
+# tbl.auto_set_font_size(False)
+# tbl.set_fontsize(9)
+# tbl.scale(1.30, 1.95)
+
+# for j in range(5):
+#     tbl[0, j].set_text_props(fontweight='bold')
+
+# for sep_row_idx in [4, 9]:
+#     for j in range(-1, 5):
+#         try:
+#             cell = tbl[sep_row_idx, j]
+#             cell.set_text_props(style='italic', color='#888', fontsize=7.5)
+#             cell.set_height(cell.get_height() * 0.40)
+#         except KeyError:
+#             pass
+
+# try:
+#     tbl[4, -1].get_text().set_text('▼ Table 2')
+#     tbl[4, -1].get_text().set_color('#E65100')
+#     tbl[4, -1].get_text().set_fontweight('bold')
+#     tbl[4, -1].get_text().set_fontsize(8)
+#     tbl[9, -1].get_text().set_text('▼ Table 3')
+#     tbl[9, -1].get_text().set_color('#2E7D32')
+#     tbl[9, -1].get_text().set_fontweight('bold')
+#     tbl[9, -1].get_text().set_fontsize(8)
+
+#     ax_tbl.set_title(
+#         'Statistical Significance Summary\n'
+#         'W/21 = fraction of max W  |  r = effect size\n'
+#         'Cell colour: green=p<.05  yellow=p<.10  red=ns\n'
+#         '▼ Table 1: Ablations  ▼ Table 2: Baselines  ▼ Table 3: Encoders',
+#         fontsize=9.5, fontweight='bold', pad=16
+#     )
+# except Exception:
+#     pass
+
+fig2.suptitle(
+    'SemanticLink: Mean F1 Comparison Across Ablations',
+    fontsize=14, fontweight='bold', y=1.01, color='#1A237E'
+)
+
+
+fig2.subplots_adjust(
+    left=0.08,
+    right=0.98,
+    top=0.90,
+    bottom=0.18
+)
+
+fig2.savefig('/kaggle/working/fig2_summary.png',
+             dpi=150, bbox_inches='tight', facecolor=fig2.get_facecolor())
+print("Saved: fig2_summary.png")
+# ============================================================
+# Figure 3 : Statistical Significance Table
+# ============================================================
+
+fig3, ax_tbl = plt.subplots(figsize=(11, 7))
+ax_tbl.axis('off')
+
+all_comparisons = [
+    ('vs w/o SRL',          abl_no_srl,      '#BBDEFB'),
+    ('vs w/o ContLoss',     abl_no_cl,       '#BBDEFB'),
+    ('vs w/o CrossAttn',    abl_no_ca,       '#BBDEFB'),
+    ('vs SecRoBERTa',    bl_secroberta,   '#FFE0B2'),
+    ('vs SecBERT',       bl_secbert,      '#FFE0B2'),
+    ('vs SBERT',         bl_sbert,        '#FFE0B2'),
+    ('vs RoBERTa-Lg',    bl_roberta_lg,   '#FFE0B2'),
+    ('vs SL+SecROB.',    sl_secroberta,   '#C8E6C9'),
+    ('vs SL+SecBERT',    sl_secbert,      '#C8E6C9'),
+    ('vs SL+Sent-BERT',  sl_sbert,        '#C8E6C9'),
+]
+
+cell_text, cell_clr, row_lbl, row_clr = [], [], [], []
+
+for name, var, rc in all_comparisons:
+    W, p, r, sig = run_wilcoxon(semanticlink_full, var)
+    delta = semanticlink_full.mean() - var.mean()
+
+    sc = '#C8E6C9' if p < 0.05 else (
+         '#FFF9C4' if p < 0.10 else '#FFCDD2')
+
+    cell_text.append([
+        f'{delta:+.4f}',
+        f'{W:.0f}/21',
+        f'{p:.4f}',
+        sig,
+        f'{r:.3f}'
+    ])
+
+    cell_clr.append([sc] * 5)
+    row_lbl.append(name)
+    row_clr.append(rc)
+
+for insert_at in [3, 8]:
+    cell_text.insert(insert_at, ['', '', '', '', ''])
+    cell_clr.insert(insert_at, ['#E8E8E8'] * 5)
+    row_lbl.insert(insert_at, '')
+    row_clr.insert(insert_at, '#D0D0D0')
+
+tbl = ax_tbl.table(
+    cellText=cell_text,
+    rowLabels=row_lbl,
+    rowColours=row_clr,
+    colLabels=['ΔF1', 'W', 'p-val', 'Sig', 'r'],
+    cellColours=cell_clr,
+    loc='center',
+    cellLoc='center'
+)
+
+tbl.auto_set_font_size(False)
+tbl.set_fontsize(10)
+tbl.scale(1.3, 2.0)
+
+for j in range(5):
+    tbl[0, j].set_text_props(fontweight='bold')
+
+ax_tbl.set_title(
+    'Wilcoxon Signed-Rank Statistical Significance Summary',
+    fontsize=12,
+    fontweight='bold',
+    pad=15
+)
+
+fig3.savefig(
+    '/kaggle/working/fig3_significance_table.png',
+    dpi=300,
+    bbox_inches='tight',
+    facecolor='white'
+)
+
+print("Saved: fig3_significance_table.png")
+print("\nDone. Both figures saved to /kaggle/working/")
+
+
+WIDE = 96
+SEP  = "" * WIDE
+DSEP = "═" * WIDE
+
+def print_section(title, comparisons):
+    """Print one comparison group as a formatted table."""
+    print(f"\n{DSEP}")
+    print(f"  {title}")
+    print(DSEP)
+    hdr = (f"  {'Comparison':<26} {'μ Full':>8} {'μ Var':>8}"
+           f" {'ΔF1':>8} {'W':>5} {'W/21':>6} {'p-val':>8} {'Sig':>5} {'r':>6}")
+    print(hdr)
+    print(SEP)
+    for label, var_arr in comparisons:
+        W, p, r, sig = run_wilcoxon(semanticlink_full, var_arr)
+        delta = semanticlink_full.mean() - var_arr.mean()
+        row = (f"  {label:<26} {semanticlink_full.mean():>8.4f} {var_arr.mean():>8.4f}"
+               f" {delta:>+8.4f} {W:>5.0f} {W/21:>6.3f} {p:>8.4f} {sig:>5} {r:>6.3f}")
+        print(row)
+    print(SEP)
+
+#  Table 1 : Ablations 
+print_section(
+    "TABLE 1 — Ablations  (SemanticLink Full vs. component removed)",
+    [
+        ("vs  –SRL Markup",       abl_no_srl),
+        ("vs  –Contrastive Loss",  abl_no_cl),
+        ("vs  –Cross Attention",   abl_no_ca),
+    ]
+)
+
+#  Table 2 : External Baselines 
+print_section(
+    "TABLE 2 — External Baselines  (encoder-only, no SemanticLink arch)",
+    [
+        ("vs  SecRoBERTa",         bl_secroberta),
+        ("vs  SecBERT",            bl_secbert),
+        ("vs  SBERT",              bl_sbert),
+        ("vs  RoBERTa-Large",      bl_roberta_lg),
+    ]
+)
+
+#  Table 3 : Alternative Encoders 
+print_section(
+    "TABLE 3 — Alternative Encoders  (SemanticLink arch + swapped encoder)",
+    [
+        ("vs  SL + SecRoBERTa",    sl_secroberta),
+        ("vs  SL + SecBERT",       sl_secbert),
+        ("vs  SL + Sentence-BERT", sl_sbert),
+    ]
+)
+
+#  Per-seed F1 breakdown 
+print(f"\n{DSEP}")
+print(f"  PER-SEED F1 SCORES  (seeds: {SEEDS})")
+print(DSEP)
+seed_cols = "".join(f"  {s:>5}" for s in SEEDS)
+print(f"  {'Model':<30}{seed_cols}    {'Mean':>6}    {'Std':>6}")
+print(SEP)
+
+all_models = [
+    ("SemanticLink  (Full)",      semanticlink_full, "   Full model "),
+    ("  w/o SRL Markup",             abl_no_srl,        None),
+    ("  w/o Contrastive Loss",       abl_no_cl,         None),
+    ("  w/o Cross Attention",        abl_no_ca,         None),
+    ("SecRoBERTa  (no arch)",     bl_secroberta,     "   External Baselines "),
+    ("SecBERT  (no arch)",        bl_secbert,        None),
+    ("SBERT  (no arch)",          bl_sbert,          None),
+    ("RoBERTa-Large  (no arch)",  bl_roberta_lg,     None),
+    ("SL + SecRoBERTa",           sl_secroberta,     "   Alternative Encoders "),
+    ("SL + SecBERT",              sl_secbert,        None),
+    ("SL + Sentence-BERT",        sl_sbert,          None),
+]
+
+for name, arr, banner in all_models:
+    if banner:
+        print(f"\n{banner}")
+    vals = "".join(f"  {v:.4f}" for v in arr)
+    print(f"  {name:<30}{vals}    {arr.mean():.4f}    {arr.std():.4f}")
+
+print(f"\n{SEP}")
+
+#  Column legend 
+print(f"""
+{DSEP}
+  COLUMN LEGEND
+{DSEP}
+  μ Full    Mean F1 of SemanticLink (Full) across the 6 seeds.
+            This value is identical in every row — it is the common reference.
+
+  μ Var     Mean F1 of the ablation / baseline / alt-encoder variant.
+
+  ΔF1       μ Full − μ Var.
+              Positive (+) → Full model is better than the variant.
+              Negative (−) → variant outperforms Full on the mean.
+              Note: ΔF1 alone does not determine significance (see p-val).
+
+  W         Wilcoxon signed-rank statistic.
+            Computed as the sum of ranks where (Full − Variant) > 0.
+            For n = 6 seeds, ranks run 1–6, so maximum W = n(n+1)/2 = 21.
+            W = 21 → Full beats Variant on every seed.
+            W = 0  → Variant beats Full on every seed.
+
+  W/21      W expressed as a fraction of its maximum (range 0.000–1.000).
+            Allows quick cross-row comparison of directional consistency.
+
+  p-val     One-sided p-value for the alternative hypothesis Full > Variant.
+            Computed via scipy.stats.wilcoxon(a, b, alternative='greater').
+            Small p → strong evidence that Full systematically outperforms.
+
+  Sig       Significance flag:
+              **   p < 0.05  → statistically significant at α = 0.05
+               *   p < 0.10  → marginal / trend-level significance
+              ns   p ≥ 0.10  → not significant (cannot reject H₀)
+
+  r         Rank-biserial effect size  r = W / 21  ∈ [0, 1].
+            Interpretation (rough Cohen-style guide):
+              ≤ 0.30  → small effect
+              0.30 – 0.50  → medium effect
+              > 0.50  → large effect
+{DSEP}
+  TEST NOTE
+  Wilcoxon signed-rank (paired, one-sided 'greater') tests whether SemanticLink
+  (Full) achieves higher F1 than each comparison systematically across 6 seeds.
+  Primary claim threshold α = 0.05 (**).  Marginal threshold α = 0.10 (*).
+  n = 6 is small, the test has limited power;'ns' results 
+{DSEP}
+""")
+
+================================================================================
+
