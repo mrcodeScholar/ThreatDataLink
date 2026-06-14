@@ -74,10 +74,6 @@ cd semanticlink
 - scipy (Wilcoxon testing)
 
 
-## License
-
-[MIT License](LICENSE)
-
 ---
 
 ## Acknowledgements
